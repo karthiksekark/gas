@@ -1,0 +1,40 @@
+# Dependencies & Locks (Massive token eaters)
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build Outputs
+dist/
+build/
+out/
+.next/
+.cache/
+
+# Environment & Secrets
+.env*
+.secrets
+*.pem
+*.key
+
+# Version Control & IDE
+.git/
+.svn/
+.vscode/
+.idea/
+*.swp
+*.log
+
+# Media & Assets (Non-code)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.pdf
+*.mp4
+*.zip
+
+# Tests & Coverage
+coverage/
+.nyc_output/
