@@ -1,0 +1,276 @@
+@use '../../styles/variables' as *;
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+// ── Config card ────────────────────────────────────────────────────────────
+.configCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: $radius-lg;
+}
+
+.configRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.configLabel {
+  color: var(--text-secondary);
+}
+
+.configVal {
+  max-width: 240px;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  &.configValAccent { color: var(--accent); }
+  &.cookieFound     { color: var(--success); }
+  &.cookieMissing   { color: var(--error); }
+  &.cookieUnknown   { color: var(--text-muted); }
+}
+
+.divider {
+  height: 1px;
+  background: var(--border);
+}
+
+.jqlLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.jqlBlock {
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  word-break: break-all;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.jqlDefault {
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+// ── Warning ────────────────────────────────────────────────────────────────
+.warning {
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--warning);
+  background: #fff8ec;
+  border: 1px solid #f0d080;
+  border-radius: $radius-md;
+}
+
+// ── Detected dates ─────────────────────────────────────────────────────────
+.datesWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.datesLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.pill {
+  padding: 3px 9px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #4f6ef7;
+  background: #eef1fe;
+  border: 1px solid #c5cffe;
+  border-radius: 5px;
+}
+
+// ── Progress ───────────────────────────────────────────────────────────────
+.progressWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.progressStatus {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.progressBar {
+  height: 4px;
+  overflow: hidden;
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+// ── Sync button ────────────────────────────────────────────────────────────
+.syncBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  background: #6b5ce9;
+  border: none;
+  border-radius: 9px;
+  transition: background $transition-fast;
+
+  &:hover:not(:disabled) {
+    background: #5a4dd4;
+  }
+
+  &.syncBtnDisabled {
+    color: var(--text-muted);
+    cursor: not-allowed;
+    background: var(--bg-secondary);
+  }
+}
+
+.btnSpinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+// ── Stats card ─────────────────────────────────────────────────────────────
+.statsCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: $radius-lg;
+}
+
+.statsTitle {
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.statsRow {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.statsLabel {
+  color: var(--text-secondary);
+}
+
+.statsVal {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+
+  &.statsValSuccess { color: var(--success); }
+  &.statsValWarning { color: var(--warning); }
+  &.statsValMoved   { color: #6b5ce9; }
+}
+
+.perDateRow {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.perDateKey {
+  font-family: var(--font-mono);
+}
+
+// ── Result messages ────────────────────────────────────────────────────────
+.successMsg {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 10px 13px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--success);
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  border-radius: $radius-md;
+  animation: fadeIn 0.2s ease;
+}
+
+.dismissBtn {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+.errorMsg {
+  padding: 10px 13px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  border-radius: $radius-md;
+  animation: fadeIn 0.2s ease;
+
+  &.errorMsgAuth {
+    color: var(--error);
+    background: var(--error-bg);
+    border: 1px solid var(--error-border);
+  }
+
+  &.errorMsgNetwork {
+    color: var(--warning);
+    background: #fff8ec;
+    border: 1px solid #f0d080;
+  }
+}
+
+.errorTitle {
+  display: block;
+  margin-bottom: 3px;
+  font-weight: 700;
+}

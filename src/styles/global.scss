@@ -1,0 +1,117 @@
+@use 'variables' as *;
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Space+Mono&display=swap');
+
+// ── CSS custom properties ──────────────────────────────────────────────────
+:root {
+  --bg-primary:      #{$bg-primary};
+  --bg-secondary:    #{$bg-secondary};
+  --bg-card:         #{$bg-card};
+  --bg-input:        #{$bg-input};
+  --border:          #{$border};
+  --border-focus:    #{$border-focus};
+  --accent:          #{$accent};
+  --accent-hover:    #{$accent-hover};
+  --accent-glow:     #{$accent-glow};
+  --success:         #{$success};
+  --success-bg:      #{$success-bg};
+  --success-border:  #{$success-border};
+  --error:           #{$error};
+  --error-bg:        #{$error-bg};
+  --error-border:    #{$error-border};
+  --warning:         #{$warning};
+  --text-primary:    #{$text-primary};
+  --text-secondary:  #{$text-secondary};
+  --text-muted:      #{$text-muted};
+  --font-mono:       #{$font-mono};
+  --font-sans:       #{$font-sans};
+}
+
+// ── Reset ──────────────────────────────────────────────────────────────────
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+// ── Base ───────────────────────────────────────────────────────────────────
+body {
+  width: 420px;
+  min-height: 480px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+#root {
+  width: 100%;
+  min-height: 480px;
+}
+
+// ── Scrollbar ──────────────────────────────────────────────────────────────
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+// ── Keyframes ──────────────────────────────────────────────────────────────
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    max-height: 400px;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 var(--accent-glow);
+  }
+  50% {
+    box-shadow: 0 0 16px 4px var(--accent-glow);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
