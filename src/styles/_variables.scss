@@ -1,0 +1,39 @@
+// Design tokens — mirrors the CSS custom properties in global.scss.
+// Use these SCSS variables for SCSS-level operations (math, color functions).
+// For runtime theming, reference the CSS custom properties via var(--token).
+
+$accent:          #4f6ef7;
+$accent-hover:    #3a58e0;
+$accent-glow:     rgba(79, 110, 247, 0.15);
+
+$bg-primary:      #ffffff;
+$bg-secondary:    #f8f8fb;
+$bg-card:         #ffffff;
+$bg-input:        #f4f4f8;
+
+$border:          #e2e2ea;
+$border-focus:    #4f6ef7;
+
+$success:         #0f9e6e;
+$success-bg:      #f0faf6;
+$success-border:  #b6e8d6;
+
+$error:           #d63b3b;
+$error-bg:        #fff5f5;
+$error-border:    #f5b8b8;
+
+$warning:         #b87a10;
+
+$text-primary:    #111118;
+$text-secondary:  #6b6b80;
+$text-muted:      #a0a0b0;
+
+$font-mono:       'Space Mono', monospace;
+$font-sans:       'DM Sans', sans-serif;
+
+$radius-sm:       6px;
+$radius-md:       8px;
+$radius-lg:       10px;
+$radius-xl:       12px;
+
+$transition-fast: 0.15s ease;

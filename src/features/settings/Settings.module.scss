@@ -1,0 +1,295 @@
+@use '../../styles/variables' as *;
+
+// ── Overlay ────────────────────────────────────────────────────────────────
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(17, 17, 24, 0.35);
+  animation: fadeIn 0.15s ease;
+}
+
+// ── Panel ──────────────────────────────────────────────────────────────────
+.panel {
+  width: 360px;
+  max-height: 92vh;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: $radius-xl;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  animation: fadeIn 0.2s ease;
+}
+
+// ── Header ─────────────────────────────────────────────────────────────────
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px 0;
+}
+
+.title {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.closeBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: $radius-sm;
+  transition: border-color $transition-fast, color $transition-fast;
+
+  &:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+}
+
+// ── Body ───────────────────────────────────────────────────────────────────
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px;
+}
+
+.divider {
+  height: 1px;
+  margin: 2px 0;
+  background: var(--border);
+}
+
+.sectionLabel {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+// ── Field group ────────────────────────────────────────────────────────────
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.labelNote {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+// ── Inputs ─────────────────────────────────────────────────────────────────
+.input {
+  width: 100%;
+  padding: 9px 11px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color $transition-fast;
+
+  &:focus {
+    border-color: var(--border-focus);
+  }
+
+  &.inputJira {
+    background: #f0f4ff;
+    border-color: #b8caff;
+
+    &:focus {
+      border-color: var(--accent);
+    }
+  }
+}
+
+// ── Secret input ───────────────────────────────────────────────────────────
+.secretWrapper {
+  position: relative;
+}
+
+.secretInput {
+  width: 100%;
+  padding: 9px 36px 9px 11px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-primary);
+  background: #fffbf0;
+  border: 1px solid #f0d080;
+  border-radius: 7px;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color $transition-fast;
+
+  &:focus {
+    border-color: #d4a017;
+  }
+}
+
+.eyeBtn {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  transform: translateY(-50%);
+}
+
+// ── Hint ───────────────────────────────────────────────────────────────────
+.hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.code {
+  padding: 1px 4px;
+  font-size: 10px;
+  background: #f4f4f8;
+  border-radius: 3px;
+
+  &.codeAccent {
+    color: var(--accent);
+    background: #e8eef8;
+  }
+}
+
+// ── Method toggle ──────────────────────────────────────────────────────────
+.methodRow {
+  display: flex;
+  gap: 6px;
+}
+
+.methodBtn {
+  flex: 1;
+  padding: 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  cursor: pointer;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  transition: border-color $transition-fast, background $transition-fast, color $transition-fast;
+
+  &.methodBtnActive {
+    color: var(--accent);
+    background: #eef1fe;
+    border-color: var(--accent);
+  }
+}
+
+// ── Textarea ───────────────────────────────────────────────────────────────
+.textarea {
+  width: 100%;
+  min-height: 60px;
+  padding: 9px 11px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+  resize: vertical;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  outline: none;
+  box-sizing: border-box;
+  line-height: 1.5;
+  transition: border-color $transition-fast;
+
+  &:focus {
+    border-color: var(--border-focus);
+  }
+
+  &.textareaJira {
+    min-height: 72px;
+    background: #f0f4ff;
+    border-color: #b8caff;
+
+    &:focus {
+      border-color: var(--accent);
+    }
+  }
+}
+
+// ── Footer ─────────────────────────────────────────────────────────────────
+.footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 12px 18px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+}
+
+.savedBadge {
+  margin-right: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--success);
+  align-self: center;
+}
+
+.cancelBtn {
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  transition: border-color $transition-fast;
+
+  &:hover {
+    border-color: var(--text-secondary);
+  }
+}
+
+.saveBtn {
+  padding: 7px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  background: var(--accent);
+  border: none;
+  border-radius: 7px;
+  transition: background $transition-fast;
+
+  &:hover {
+    background: var(--accent-hover);
+  }
+}
