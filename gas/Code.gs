@@ -5,7 +5,6 @@
 // ============================================================
 
 const SECRET_KEY     = 'your-secret-key-here'
-const SHEET_NAME     = 'Sheet1'
 const COLUMNS        = ['Ticket Number', 'Title', 'Status', 'Due Date', 'Comments']
 const TICKET_IDX     = 0
 const TITLE_IDX      = 1
@@ -39,7 +38,13 @@ function srvErr(m)   { return respond({ success:false, error:m||'Server Error', 
 function ok(d)       { return respond(Object.assign({ success:true }, d)) }
 
 function validateKey(k) { return k === SECRET_KEY }
-function getSheet()     { return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME) }
+
+// Always targets the first (left-most) sheet regardless of its name.
+function getSheet() {
+  var sheets = SpreadsheetApp.getActiveSpreadsheet().getSheets()
+  if (!sheets || !sheets.length) throw new Error('Spreadsheet has no sheets')
+  return sheets[0]
+}
 
 // ── Date parsing → M/D/YYYY or null ──
 function parseDate(val) {
@@ -573,8 +578,7 @@ var SNAPSHOT_SHEET = '_snapshot'
 function takeSnapshot() {
   try {
     var ss    = SpreadsheetApp.getActiveSpreadsheet()
-    var sheet = ss.getSheetByName(SHEET_NAME)
-    if (!sheet) return srvErr('Sheet "' + SHEET_NAME + '" not found')
+    var sheet = getSheet()
 
     // Remove any stale snapshot from a previous aborted run
     var existing = ss.getSheetByName(SNAPSHOT_SHEET)
@@ -601,7 +605,7 @@ function takeSnapshot() {
 function revertSnapshot() {
   try {
     var ss    = SpreadsheetApp.getActiveSpreadsheet()
-    var sheet = ss.getSheetByName(SHEET_NAME)
+    var sheet = getSheet()
     var snap  = ss.getSheetByName(SNAPSHOT_SHEET)
 
     if (!snap) {
@@ -653,7 +657,7 @@ function doGet(e) {
   if (!validateKey(key)) return unauth()
   switch((e.parameter&&e.parameter.action)||'read') {
     case 'read':         return readAll()
-    case 'getDates':     return ok({dates:getAllDates(getSheet())})
+    case 'getDates':     return getDates()
     case 'takeSnapshot': return takeSnapshot()
     default:             return badReq('Unknown action')
   }
