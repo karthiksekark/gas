@@ -101,8 +101,12 @@ async function parseResponse(res) {
 
 async function getJiraSessionCookie(jiraBaseUrl) {
   try {
-    const url    = jiraBaseUrl.startsWith('http') ? jiraBaseUrl : 'https://' + jiraBaseUrl
-    const cookie = await chrome.cookies.get({ url, name: 'JSESSIONID' })
+    const full   = jiraBaseUrl.startsWith('http') ? jiraBaseUrl : 'https://' + jiraBaseUrl
+    // chrome.cookies.get matches against cookie path scope; using origin (no
+    // path) ensures JSESSIONID (always scoped to /) is found regardless of
+    // any path the user appended to their Jira base URL.
+    const origin = new URL(full).origin
+    const cookie = await chrome.cookies.get({ url: origin, name: 'JSESSIONID' })
     return cookie ? cookie.value : null
   } catch { return null }
 }
@@ -191,7 +195,10 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
         if (cancelRequested) throw Object.assign(new DOMException('Cancelled', 'AbortError'), { cancelled: true })
 
         const jiraUrl = `${jiraBaseUrl}/rest/api/3/search?jql=${jql}&fields=summary,status,duedate&maxResults=${JIRA_MAX}&startAt=${startAt}`
-        const jiraRes = await fetch(jiraUrl, { headers: jiraHeaders, credentials: 'include', signal })
+        // credentials:'include' is not needed — the Cookie header is set
+        // manually above. Including it triggers strict CORS credentialed-
+        // request mode, which Jira's CORS policy rejects for extension origins.
+        const jiraRes = await fetch(jiraUrl, { headers: jiraHeaders, signal })
 
         if (!jiraRes.ok) {
           throw Object.assign(new Error(`JIRA ${jiraRes.status} for ${jiraDate}`), { code: jiraRes.status })
