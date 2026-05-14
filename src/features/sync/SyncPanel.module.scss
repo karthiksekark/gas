@@ -159,6 +159,26 @@
   animation: spin 1.2s linear infinite;
 }
 
+// ── Reverting banner ───────────────────────────────────────────────────────
+.revertWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 13px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #4a3800;
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: $radius-md;
+  animation: fadeIn 0.2s ease;
+}
+
+.revertWarningIcon {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
 // ── Cancel button ──────────────────────────────────────────────────────────
 .cancelBtn {
   width: 100%;
@@ -172,9 +192,16 @@
   border-radius: 9px;
   transition: background $transition-fast, border-color $transition-fast;
 
-  &:hover {
+  &:hover:not(:disabled) {
     background: #fde8e8;
     border-color: var(--error);
+  }
+
+  &.cancelBtnDisabled {
+    color: var(--text-muted);
+    cursor: not-allowed;
+    background: var(--bg-secondary);
+    border-color: var(--border);
   }
 }
 
