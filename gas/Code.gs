@@ -5,7 +5,6 @@
 // ============================================================
 
 const SECRET_KEY     = 'your-secret-key-here'
-const SHEET_NAME     = 'Sheet1'
 const COLUMNS        = ['Ticket Number', 'Title', 'Status', 'Due Date', 'Comments']
 const TICKET_IDX     = 0
 const TITLE_IDX      = 1
@@ -39,7 +38,13 @@ function srvErr(m)   { return respond({ success:false, error:m||'Server Error', 
 function ok(d)       { return respond(Object.assign({ success:true }, d)) }
 
 function validateKey(k) { return k === SECRET_KEY }
-function getSheet()     { return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_NAME) }
+
+// Always targets the first (left-most) sheet regardless of its name.
+function getSheet() {
+  var sheets = SpreadsheetApp.getActiveSpreadsheet().getSheets()
+  if (!sheets || !sheets.length) throw new Error('Spreadsheet has no sheets')
+  return sheets[0]
+}
 
 // ── Date parsing → M/D/YYYY or null ──
 function parseDate(val) {
@@ -556,14 +561,105 @@ function syncJira(issuesByDate) {
   } catch(e){return srvErr(e.message)}
 }
 
+// ── Snapshot helpers ──────────────────────────────────────────────────────
+//
+//  takeSnapshot  — copies Sheet1 (values + formatting) into a hidden
+//                  _snapshot tab before the syncJira write begins.
+//  revertSnapshot — restores Sheet1 from _snapshot, then deletes the tab.
+//  deleteSnapshot — deletes the _snapshot tab after a successful sync.
+//
+//  Called by the extension's background worker:
+//    takeSnapshot   → GET  ?action=takeSnapshot
+//    revertSnapshot → POST body.action='revertSnapshot'
+//    deleteSnapshot → POST body.action='deleteSnapshot'
+
+var SNAPSHOT_SHEET = '_snapshot'
+
+function takeSnapshot() {
+  try {
+    var ss    = SpreadsheetApp.getActiveSpreadsheet()
+    var sheet = getSheet()
+
+    // Remove any stale snapshot from a previous aborted run
+    var existing = ss.getSheetByName(SNAPSHOT_SHEET)
+    if (existing) ss.deleteSheet(existing)
+
+    var lr = sheet.getLastRow()
+    var lc = sheet.getLastColumn()
+
+    // Create a hidden snapshot sheet
+    var snap = ss.insertSheet(SNAPSHOT_SHEET)
+    snap.hideSheet()
+
+    if (lr > 0 && lc > 0) {
+      var src = sheet.getRange(1, 1, lr, lc)
+      var dst = snap.getRange(1, 1, lr, lc)
+      // PASTE_NORMAL copies values, formulas, and all formatting
+      src.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_NORMAL, false)
+    }
+
+    return ok({ message: 'Snapshot taken', rows: lr, cols: lc })
+  } catch(e) { return srvErr(e.message) }
+}
+
+function revertSnapshot() {
+  try {
+    var ss    = SpreadsheetApp.getActiveSpreadsheet()
+    var sheet = getSheet()
+    var snap  = ss.getSheetByName(SNAPSHOT_SHEET)
+
+    if (!snap) {
+      // Cancel happened before snapshot was taken — nothing to revert
+      return ok({ message: 'No snapshot found — no changes were made', noSnapshot: true })
+    }
+
+    var snapLr = snap.getLastRow()
+    var snapLc = snap.getLastColumn()
+    var currLr = sheet.getLastRow()
+
+    // 1. Clear Sheet1 (values + formatting)
+    sheet.clear()
+
+    // 2. Delete rows that were added during the partial sync so the
+    //    sheet dimensions match the snapshot exactly
+    var sheetLrNow = sheet.getMaxRows()
+    var targetRows = Math.max(snapLr, 1)
+    if (sheetLrNow > targetRows) {
+      sheet.deleteRows(targetRows + 1, sheetLrNow - targetRows)
+    }
+
+    // 3. Restore from snapshot (values + formatting + formulas)
+    if (snapLr > 0 && snapLc > 0) {
+      var src = snap.getRange(1, 1, snapLr, snapLc)
+      var dst = sheet.getRange(1, 1, snapLr, snapLc)
+      src.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_NORMAL, false)
+    }
+
+    // 4. Delete the snapshot tab
+    ss.deleteSheet(snap)
+
+    return ok({ message: 'Sheet reverted to pre-sync state', rows: snapLr })
+  } catch(e) { return srvErr(e.message) }
+}
+
+function deleteSnapshot() {
+  try {
+    var ss   = SpreadsheetApp.getActiveSpreadsheet()
+    var snap = ss.getSheetByName(SNAPSHOT_SHEET)
+    if (snap) ss.deleteSheet(snap)
+    return ok({ message: 'Snapshot deleted' })
+  } catch(e) { return srvErr(e.message) }
+}
+
 // ── Entry points ──
 function doGet(e) {
   var key=e.parameter&&e.parameter.key?e.parameter.key:null
   if (!validateKey(key)) return unauth()
   switch((e.parameter&&e.parameter.action)||'read') {
-    case 'read':     return readAll()
-    case 'getDates': return ok({dates:getAllDates(getSheet())})
-    default:         return badReq('Unknown action')
+    case 'read':         return readAll()
+    case 'getDates':     return getDates()
+    case 'takeSnapshot': return takeSnapshot()
+    default:             return badReq('Unknown action')
   }
 }
 
@@ -572,10 +668,12 @@ function doPost(e) {
   try{body=JSON.parse(e.postData.contents)}catch(_){return badReq('Invalid JSON')}
   if (!validateKey(body.key||null)) return unauth()
   switch(body.action) {
-    case 'create':   return createRow(body.data)
-    case 'update':   return updateRow(body.id, body.data||{})
-    case 'delete':   return deleteRow(body.id)
-    case 'syncJira': return syncJira(body.issuesByDate)
-    default:         return badReq('Unknown action')
+    case 'create':         return createRow(body.data)
+    case 'update':         return updateRow(body.id, body.data||{})
+    case 'delete':         return deleteRow(body.id)
+    case 'syncJira':       return syncJira(body.issuesByDate)
+    case 'revertSnapshot': return revertSnapshot()
+    case 'deleteSnapshot': return deleteSnapshot()
+    default:               return badReq('Unknown action')
   }
 }

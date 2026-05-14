@@ -138,6 +138,73 @@
   transition: width 0.3s ease;
 }
 
+// ── Background-sync warning banner ────────────────────────────────────────
+.bgWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 13px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #7c5b00;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: $radius-md;
+  animation: fadeIn 0.2s ease;
+}
+
+.bgWarningIcon {
+  flex-shrink: 0;
+  font-size: 13px;
+  animation: spin 1.2s linear infinite;
+}
+
+// ── Reverting banner ───────────────────────────────────────────────────────
+.revertWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 13px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #4a3800;
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: $radius-md;
+  animation: fadeIn 0.2s ease;
+}
+
+.revertWarningIcon {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+// ── Cancel button ──────────────────────────────────────────────────────────
+.cancelBtn {
+  width: 100%;
+  padding: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--error);
+  cursor: pointer;
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  border-radius: 9px;
+  transition: background $transition-fast, border-color $transition-fast;
+
+  &:hover:not(:disabled) {
+    background: #fde8e8;
+    border-color: var(--error);
+  }
+
+  &.cancelBtnDisabled {
+    color: var(--text-muted);
+    cursor: not-allowed;
+    background: var(--bg-secondary);
+    border-color: var(--border);
+  }
+}
+
 // ── Sync button ────────────────────────────────────────────────────────────
 .syncBtn {
   display: flex;
@@ -166,14 +233,6 @@
   }
 }
 
-.btnSpinner {
-  width: 13px;
-  height: 13px;
-  border: 2px solid rgba(255, 255, 255, 0.35);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-}
 
 // ── Stats card ─────────────────────────────────────────────────────────────
 .statsCard {
