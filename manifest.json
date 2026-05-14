@@ -3,6 +3,10 @@
   "name": "GAS Trigger",
   "version": "1.0.0",
   "description": "Trigger Google Apps Script Web Apps from your browser toolbar",
+  "background": {
+    "service_worker": "src/background/worker.js",
+    "type": "module"
+  },
   "action": {
     "default_icon": {
       "16": "icons/icon16.png",
@@ -20,7 +24,8 @@
   },
   "permissions": [
     "storage",
-    "cookies"
+    "cookies",
+    "notifications"
   ],
   "host_permissions": [
     "https://script.google.com/*",

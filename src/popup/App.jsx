@@ -15,7 +15,7 @@ function formatLastUsed(iso) {
 }
 
 export default function App() {
-  const { prefs, loaded, saveLastUsed, setPrefs } = useStorage()
+  const { prefs, loaded, setPrefs } = useStorage()
   const [showSettings, setShowSettings] = useState(false)
 
   const handlePrefsUpdate = useCallback((updates) => {
@@ -57,7 +57,6 @@ export default function App() {
           secretKey={prefs.secretKey || ''}
           jiraBaseUrl={prefs.jiraBaseUrl || ''}
           jiraJqlQuery={prefs.jiraJqlQuery || ''}
-          onSaveLastUsed={saveLastUsed}
         />
       </main>
 

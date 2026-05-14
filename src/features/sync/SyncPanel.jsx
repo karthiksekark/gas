@@ -1,163 +1,114 @@
-import React, { useState } from 'react'
-import moment from 'moment-timezone'
+import React, { useState, useEffect, useCallback } from 'react'
 import styles from './SyncPanel.module.scss'
 
-const JIRA_TZ  = 'America/New_York'
-const JIRA_MAX = 50
+const chromeRuntime = () => typeof chrome !== 'undefined' && chrome.runtime
 
-async function getJiraSessionCookie(jiraBaseUrl) {
-  if (typeof chrome === 'undefined' || !chrome.cookies) return null
-  try {
-    const url    = jiraBaseUrl.startsWith('http') ? jiraBaseUrl : 'https://' + jiraBaseUrl
-    const cookie = await chrome.cookies.get({ url, name: 'JSESSIONID' })
-    return cookie ? cookie.value : null
-  } catch (err) {
-    console.warn('Could not read JSESSIONID cookie:', err)
-    return null
+function sendToWorker(type, payload = {}) {
+  return new Promise((resolve) => {
+    if (!chromeRuntime()) return resolve(null)
+    chrome.runtime.sendMessage({ type, payload }, (response) => {
+      if (chrome.runtime.lastError) return resolve(null)
+      resolve(response)
+    })
+  })
+}
+
+export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
+  const [loading, setLoading]             = useState(false)
+  const [syncProgress, setSyncProgress]   = useState(0)
+  const [syncStatus, setSyncStatus]       = useState('')
+  const [result, setResult]               = useState(null)
+  const [syncStats, setSyncStats]         = useState(null)
+  const [detectedDates, setDetectedDates] = useState([])
+  const [cookieFound, setCookieFound]     = useState(null)
+
+  // Hydrate from persisted worker state when popup opens
+  useEffect(() => {
+    if (!chromeRuntime()) return
+
+    sendToWorker('GET_SYNC_STATE').then((state) => {
+      if (!state) return
+      if (state.running) {
+        setLoading(true)
+        setSyncProgress(state.progress || 0)
+        setSyncStatus(state.status || 'Syncing...')
+        if (state.dates) setDetectedDates(state.dates)
+        if (state.cookieFound != null) setCookieFound(state.cookieFound)
+      } else if (state.result) {
+        applyResult(state.result)
+      }
+    })
+
+    // Listen for live updates from the worker
+    const onMessage = (message) => {
+      if (message.type === 'SYNC_PROGRESS') {
+        const { progress, status, dates, cookieFound: cf } = message.payload
+        setSyncProgress(progress)
+        setSyncStatus(status)
+        if (dates) setDetectedDates(dates)
+        if (cf != null) setCookieFound(cf)
+      } else if (message.type === 'SYNC_COMPLETE') {
+        setLoading(false)
+        setSyncProgress(0)
+        setSyncStatus('')
+        if (message.payload.cancelled) {
+          setResult(null)
+        } else {
+          applyResult(message.payload)
+        }
+      }
+    }
+
+    chrome.runtime.onMessage.addListener(onMessage)
+    return () => chrome.runtime.onMessage.removeListener(onMessage)
+  }, [])
+
+  function applyResult(payload) {
+    if (payload.success) {
+      setSyncStats(payload.result?.stats ?? payload.stats ?? null)
+      setResult({ success: true, message: payload.result?.message ?? payload.message ?? 'Sync complete' })
+    } else if (payload.success === false) {
+      setResult({ success: false, error: payload.error, code: payload.code })
+    }
   }
-}
-
-function buildGetUrl(url, action, secretKey) {
-  const sep = url.includes('?') ? '&' : '?'
-  return `${url}${sep}action=${action}${secretKey ? `&key=${encodeURIComponent(secretKey)}` : ''}`
-}
-
-async function parseResponse(res) {
-  const text = await res.text()
-  try { return JSON.parse(text) }
-  catch { return { success: false, error: text || 'Invalid response', code: res.status } }
-}
-
-export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery, onSaveLastUsed }) {
-  const [loading, setLoading]               = useState(false)
-  const [result, setResult]                 = useState(null)
-  const [syncStats, setSyncStats]           = useState(null)
-  const [syncProgress, setSyncProgress]     = useState(0)
-  const [syncStatus, setSyncStatus]         = useState('')
-  const [detectedDates, setDetectedDates]   = useState([])
-  const [cookieFound, setCookieFound]       = useState(null)
 
   const isJiraConfigured = !!(jiraBaseUrl && url)
 
-  const postBody = (payload) =>
-    JSON.stringify({ ...payload, key: secretKey || undefined })
-
-  const doJiraSync = async () => {
-    if (!isJiraConfigured) return
+  const doJiraSync = useCallback(async () => {
+    if (!isJiraConfigured || loading) return
     setLoading(true)
     setResult(null)
     setSyncStats(null)
     setSyncProgress(0)
-    setSyncStatus('Reading dates from sheet...')
+    setSyncStatus('Starting sync...')
+    setDetectedDates([])
+    setCookieFound(null)
 
-    try {
-      // Step 1 — get dates from column A
-      const datesRes  = await fetch(buildGetUrl(url, 'getDates', secretKey))
-      const datesData = await parseResponse(datesRes)
-
-      if (datesData?.error === 'Unauthorized' || datesData?.code === 401) {
-        setResult({ success: false, error: 'Secret key mismatch. Check ⚙ Preferences.', code: 401 })
-        return
-      }
-      if (!datesData.success || !Array.isArray(datesData.dates) || !datesData.dates.length) {
-        setResult({ success: false, error: 'No valid dates found in column A of the sheet.', code: 404 })
-        return
-      }
-
-      const rawDates = datesData.dates
-      setDetectedDates(rawDates)
-      setSyncProgress(10)
-
-      // Step 2 — fetch JIRA for each date
-      const jsessionId = await getJiraSessionCookie(jiraBaseUrl)
-      setCookieFound(!!jsessionId)
-      const jiraHeaders = { Accept: 'application/json' }
-      if (jsessionId) {
-        jiraHeaders['Cookie'] = `JSESSIONID=${jsessionId}`
-      }
-
-      const issuesByDate = {}
-      const perDate      = []
-
-      for (let di = 0; di < rawDates.length; di++) {
-        const rawDate = rawDates[di]
-        const m = moment.tz(rawDate, ['M/D/YYYY', 'MM/DD/YYYY'], true, JIRA_TZ)
-        if (!m.isValid()) { perDate.push({ date: rawDate, skipped: true }); continue }
-
-        const jiraDate = m.format('YYYY-MM-DD')
-        setSyncStatus(`[${di + 1}/${rawDates.length}] Fetching JIRA for ${jiraDate}...`)
-        setSyncProgress(10 + Math.round((di / rawDates.length) * 50))
-
-        const jqlTemplate = jiraJqlQuery?.trim() || 'due="{date}" ORDER BY created ASC'
-        const resolvedJql = jqlTemplate.replace(/\{date\}/g, jiraDate)
-        const jql         = encodeURIComponent(resolvedJql)
-
-        let allIssues = [], startAt = 0, total = null
-        while (true) {
-          const jiraUrl = `${jiraBaseUrl}/rest/api/3/search?jql=${jql}&fields=summary,status,duedate&maxResults=${JIRA_MAX}&startAt=${startAt}`
-          const jiraRes = await fetch(jiraUrl, { headers: jiraHeaders, credentials: 'include' })
-
-          if (!jiraRes.ok) {
-            setResult({ success: false, error: `JIRA ${jiraRes.status} for ${jiraDate}`, code: jiraRes.status })
-            return
-          }
-
-          const jiraData = await jiraRes.json()
-          if (total === null) total = jiraData.total
-          allIssues = allIssues.concat(jiraData.issues || [])
-          startAt  += (jiraData.issues || []).length
-          if (startAt >= total || !(jiraData.issues || []).length) break
-        }
-
-        issuesByDate[rawDate] = allIssues.map((issue) => ({
-          'Ticket Number': issue.key || '',
-          'Title':         issue.fields?.summary || '',
-          'Status':        issue.fields?.status?.name || 'unknown',
-          'Due Date':      rawDate,
-        }))
-        perDate.push({ date: rawDate, jiraDate, issues: allIssues.length })
-      }
-
-      setSyncStatus('Writing to sheet...')
-      setSyncProgress(65)
-
-      // Step 3 — single GAS call with all issues
-      const gasRes  = await fetch(url, {
-        method:  'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body:    postBody({ action: 'syncJira', issuesByDate }),
-      })
-      const gasData = await parseResponse(gasRes)
-      setSyncProgress(100)
-
-      if (gasData.success) {
-        const st = gasData.stats || {}
-        setSyncStats({ ...st, perDate })
-        setResult({
-          success: true,
-          message: `Sync complete — ${st.inserted || 0} inserted, ${st.updated || 0} updated, ${st.moved || 0} moved, ${st.skipped || 0} skipped`,
-        })
-        onSaveLastUsed()
-      } else {
-        setResult({ success: false, error: gasData.error || 'Sync failed', code: gasData.code })
-      }
-    } catch (err) {
-      setResult({ success: false, error: err.message || 'Network error' })
-    } finally {
+    const response = await sendToWorker('START_SYNC', { url, secretKey, jiraBaseUrl, jiraJqlQuery })
+    if (!response?.ok) {
       setLoading(false)
-      setSyncProgress(0)
-      setSyncStatus('')
+      const reason = response?.reason === 'already_running'
+        ? 'A sync is already running.'
+        : 'Could not reach background worker.'
+      setResult({ success: false, error: reason })
     }
-  }
+  }, [isJiraConfigured, loading, url, secretKey, jiraBaseUrl, jiraJqlQuery])
 
-  const cookieStatusClass =
-    cookieFound === true  ? styles.cookieFound :
+  const doCancelSync = useCallback(() => {
+    sendToWorker('CANCEL_SYNC')
+    setLoading(false)
+    setSyncProgress(0)
+    setSyncStatus('')
+  }, [])
+
+  const cookieClass =
+    cookieFound === true  ? styles.cookieFound  :
     cookieFound === false ? styles.cookieMissing :
     styles.cookieUnknown
 
-  const cookieStatusText =
-    cookieFound === true  ? '✓ found' :
-    cookieFound === false ? '✕ not found' :
+  const cookieText =
+    cookieFound === true  ? '✓ found'       :
+    cookieFound === false ? '✕ not found'   :
     '— checked on sync'
 
   return (
@@ -180,7 +131,7 @@ export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery, o
           </div>
           <div className={styles.configRow}>
             <span className={styles.configLabel}>JSESSIONID</span>
-            <span className={`${styles.configVal} ${cookieStatusClass}`}>{cookieStatusText}</span>
+            <span className={`${styles.configVal} ${cookieClass}`}>{cookieText}</span>
           </div>
           <div className={styles.divider} />
           <div className={styles.jqlLabel}>JQL Template</div>
@@ -221,21 +172,31 @@ export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery, o
         </div>
       )}
 
-      {/* Sync button */}
-      <button
-        className={`${styles.syncBtn} ${(!isJiraConfigured || loading) ? styles.syncBtnDisabled : ''}`}
-        onClick={doJiraSync}
-        disabled={!isJiraConfigured || loading}
-      >
-        {loading ? (
-          <>
-            <div className={styles.btnSpinner} />
-            {syncStatus || 'Syncing...'}
-          </>
-        ) : (
-          '⟳ Sync from JIRA'
-        )}
-      </button>
+      {/* Background-sync warning banner */}
+      {loading && (
+        <div className={styles.bgWarning}>
+          <span className={styles.bgWarningIcon}>⟳</span>
+          <span>
+            Sync is running in the background — safe to close this popup.
+            Watch the extension icon for live status.
+          </span>
+        </div>
+      )}
+
+      {/* Action button — Sync or Cancel */}
+      {loading ? (
+        <button className={styles.cancelBtn} onClick={doCancelSync}>
+          ✕ Cancel Sync
+        </button>
+      ) : (
+        <button
+          className={`${styles.syncBtn} ${!isJiraConfigured ? styles.syncBtnDisabled : ''}`}
+          onClick={doJiraSync}
+          disabled={!isJiraConfigured}
+        >
+          ⟳ Sync from JIRA
+        </button>
+      )}
 
       {/* Stats */}
       {syncStats && (
