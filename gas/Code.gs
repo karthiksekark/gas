@@ -39,10 +39,17 @@ function ok(d)       { return respond(Object.assign({ success:true }, d)) }
 
 function validateKey(k) { return k === SECRET_KEY }
 
-// Always targets the first (left-most) sheet regardless of its name.
+// Returns only non-hidden sheets, preserving their left-to-right order.
+function getVisibleSheets() {
+  return SpreadsheetApp.getActiveSpreadsheet().getSheets().filter(function(s) {
+    return !s.isSheetHidden()
+  })
+}
+
+// Targets the first visible (non-hidden) sheet by position.
 function getSheet() {
-  var sheets = SpreadsheetApp.getActiveSpreadsheet().getSheets()
-  if (!sheets || !sheets.length) throw new Error('Spreadsheet has no sheets')
+  var sheets = getVisibleSheets()
+  if (!sheets.length) throw new Error('No visible sheets found in spreadsheet')
   return sheets[0]
 }
 
