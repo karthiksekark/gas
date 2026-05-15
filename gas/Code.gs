@@ -39,9 +39,15 @@ function ok(d)       { return respond(Object.assign({ success:true }, d)) }
 
 function validateKey(k) { return k === SECRET_KEY }
 
-// Always targets the first (left-most) sheet regardless of its name.
-function getSheet() {
-  var sheets = SpreadsheetApp.getActiveSpreadsheet().getSheets()
+// Returns the named sheet when sheetName is provided, otherwise the first sheet.
+function getSheet(sheetName) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet()
+  if (sheetName) {
+    var s = ss.getSheetByName(sheetName)
+    if (!s) throw new Error('Sheet "' + sheetName + '" not found')
+    return s
+  }
+  var sheets = ss.getSheets()
   if (!sheets || !sheets.length) throw new Error('Spreadsheet has no sheets')
   return sheets[0]
 }
@@ -305,9 +311,9 @@ function finaliseDate(sheet, triggerRow) {
 
 // ── CRUD ──
 
-function readAll() {
+function readAll(sn) {
   try {
-    var sheet=getSheet(), data=sheet.getDataRange().getValues()
+    var sheet=getSheet(sn), data=sheet.getDataRange().getValues()
     if (data.length<=1) return ok({data:[]})
     var rows=[]
     for (var i=1;i<data.length;i++) {
@@ -319,15 +325,15 @@ function readAll() {
   } catch(e){return srvErr(e.message)}
 }
 
-function getDates() {
-  try { return ok({dates:getAllDates(getSheet())}) }
+function getDates(sn) {
+  try { return ok({dates:getAllDates(getSheet(sn))}) }
   catch(e){return srvErr(e.message)}
 }
 
-function createRow(data) {
+function createRow(data, sn) {
   if (!data||!data['Title']) return badReq('Title required')
   try {
-    var sheet=getSheet()
+    var sheet=getSheet(sn)
     // Duplicate check
     var all=sheet.getDataRange().getValues()
     var norm=data['Title'].trim().toLowerCase(), dups=[]
@@ -378,10 +384,10 @@ function createRow(data) {
   } catch(e){return srvErr(e.message)}
 }
 
-function updateRow(ticket, data) {
+function updateRow(ticket, data, sn) {
   if (!ticket) return badReq('Ticket Number required')
   try {
-    var sheet=getSheet(), all=sheet.getDataRange().getValues()
+    var sheet=getSheet(sn), all=sheet.getDataRange().getValues()
     var row=-1
     for (var i=0;i<all.length;i++) if(String(all[i][TICKET_IDX]).trim()===String(ticket).trim()){row=i+1;break}
     if (row===-1) return respond({success:false,error:'Not found: '+ticket,code:404})
@@ -396,10 +402,10 @@ function updateRow(ticket, data) {
   } catch(e){return srvErr(e.message)}
 }
 
-function deleteRow(ticket) {
+function deleteRow(ticket, sn) {
   if (!ticket) return badReq('Ticket Number required')
   try {
-    var sheet=getSheet(), all=sheet.getDataRange().getValues()
+    var sheet=getSheet(sn), all=sheet.getDataRange().getValues()
     var row=-1
     for (var i=0;i<all.length;i++) if(String(all[i][TICKET_IDX]).trim()===String(ticket).trim()){row=i+1;break}
     if (row===-1) return respond({success:false,error:'Not found: '+ticket,code:404})
@@ -409,10 +415,10 @@ function deleteRow(ticket) {
 }
 
 // ── syncJira — single global pass ──
-function syncJira(issuesByDate) {
+function syncJira(issuesByDate, sn) {
   if (!issuesByDate||typeof issuesByDate!=='object') return badReq('issuesByDate required')
   try {
-    var sheet=getSheet()
+    var sheet=getSheet(sn)
     var allDates=getAllDates(sheet)
 
     // Step 1: build globalMap — ticket → {blockDate, triggerRow, rowNum, jiraVals, fullRow}
@@ -575,10 +581,10 @@ function syncJira(issuesByDate) {
 
 var SNAPSHOT_SHEET = '_snapshot'
 
-function takeSnapshot() {
+function takeSnapshot(sn) {
   try {
     var ss    = SpreadsheetApp.getActiveSpreadsheet()
-    var sheet = getSheet()
+    var sheet = getSheet(sn)
 
     // Remove any stale snapshot from a previous aborted run
     var existing = ss.getSheetByName(SNAPSHOT_SHEET)
@@ -602,10 +608,10 @@ function takeSnapshot() {
   } catch(e) { return srvErr(e.message) }
 }
 
-function revertSnapshot() {
+function revertSnapshot(sn) {
   try {
     var ss    = SpreadsheetApp.getActiveSpreadsheet()
-    var sheet = getSheet()
+    var sheet = getSheet(sn)
     var snap  = ss.getSheetByName(SNAPSHOT_SHEET)
 
     if (!snap) {
@@ -655,10 +661,11 @@ function deleteSnapshot() {
 function doGet(e) {
   var key=e.parameter&&e.parameter.key?e.parameter.key:null
   if (!validateKey(key)) return unauth()
+  var sn=(e.parameter&&e.parameter.sheetName)||''
   switch((e.parameter&&e.parameter.action)||'read') {
-    case 'read':         return readAll()
-    case 'getDates':     return getDates()
-    case 'takeSnapshot': return takeSnapshot()
+    case 'read':         return readAll(sn)
+    case 'getDates':     return getDates(sn)
+    case 'takeSnapshot': return takeSnapshot(sn)
     default:             return badReq('Unknown action')
   }
 }
@@ -667,12 +674,13 @@ function doPost(e) {
   var body={}
   try{body=JSON.parse(e.postData.contents)}catch(_){return badReq('Invalid JSON')}
   if (!validateKey(body.key||null)) return unauth()
+  var sn=body.sheetName||''
   switch(body.action) {
-    case 'create':         return createRow(body.data)
-    case 'update':         return updateRow(body.id, body.data||{})
-    case 'delete':         return deleteRow(body.id)
-    case 'syncJira':       return syncJira(body.issuesByDate)
-    case 'revertSnapshot': return revertSnapshot()
+    case 'create':         return createRow(body.data, sn)
+    case 'update':         return updateRow(body.id, body.data||{}, sn)
+    case 'delete':         return deleteRow(body.id, sn)
+    case 'syncJira':       return syncJira(body.issuesByDate, sn)
+    case 'revertSnapshot': return revertSnapshot(sn)
     case 'deleteSnapshot': return deleteSnapshot()
     default:               return badReq('Unknown action')
   }

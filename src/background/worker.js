@@ -88,9 +88,11 @@ function toJiraDate(rawDate) {
 }
 
 // ── HTTP helpers ───────────────────────────────────────────────────────────
-function buildGetUrl(url, action, secretKey) {
+function buildGetUrl(url, action, secretKey, sheetName) {
   const sep = url.includes('?') ? '&' : '?'
-  return `${url}${sep}action=${action}${secretKey ? `&key=${encodeURIComponent(secretKey)}` : ''}`
+  let q = `${url}${sep}action=${action}${secretKey ? `&key=${encodeURIComponent(secretKey)}` : ''}`
+  if (sheetName) q += `&sheetName=${encodeURIComponent(sheetName)}`
+  return q
 }
 
 async function parseResponse(res) {
@@ -121,11 +123,11 @@ function gasPost(url, secretKey, action, extra = {}) {
 }
 
 // ── Revert logic ───────────────────────────────────────────────────────────
-async function doRevert(url, secretKey) {
+async function doRevert(url, secretKey, sheetName) {
   badgeReverting()
   tellPopup('SYNC_PROGRESS', { progress: 0, status: 'Reverting sheet to pre-sync state…', phase: 'reverting' })
 
-  const revertData = await gasPost(url, secretKey, 'revertSnapshot')
+  const revertData = await gasPost(url, secretKey, 'revertSnapshot', { sheetName: sheetName || undefined })
 
   if (revertData.success) {
     const msg = revertData.noSnapshot
@@ -141,11 +143,11 @@ async function doRevert(url, secretKey) {
 }
 
 // ── Main sync function ─────────────────────────────────────────────────────
-async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
+async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetName }) {
   cancelRequested     = false
   snapshotTaken       = false
   syncAbortController = new AbortController()
-  syncPayload         = { url, secretKey }
+  syncPayload         = { url, secretKey, sheetName }
   const { signal }    = syncAbortController
 
   badgeRunning()
@@ -153,7 +155,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
   try {
     // ── Step 1: read dates from GAS ───────────────────────────────────────
     await broadcastProgress(0, 'Reading dates from sheet…')
-    const datesRes  = await fetch(buildGetUrl(url, 'getDates', secretKey), { signal })
+    const datesRes  = await fetch(buildGetUrl(url, 'getDates', secretKey, sheetName), { signal })
     const datesData = await parseResponse(datesRes)
 
     if (datesData?.error === 'Unauthorized' || datesData?.code === 401) {
@@ -222,7 +224,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
 
     // ── Step 3: snapshot (before any sheet mutations) ─────────────────────
     await broadcastProgress(62, 'Taking sheet snapshot…')
-    const snapData = await fetch(buildGetUrl(url, 'takeSnapshot', secretKey), { signal }).then(parseResponse)
+    const snapData = await fetch(buildGetUrl(url, 'takeSnapshot', secretKey, sheetName), { signal }).then(parseResponse)
     if (snapData.success) snapshotTaken = true
 
     // Final cancel gate — after snapshot, before write
@@ -233,7 +235,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
     const gasRes  = await fetch(url, {
       method:  'POST',
       headers: { 'Content-Type': 'text/plain' },
-      body:    JSON.stringify({ action: 'syncJira', issuesByDate, key: secretKey || undefined }),
+      body:    JSON.stringify({ action: 'syncJira', issuesByDate, key: secretKey || undefined, sheetName: sheetName || undefined }),
       signal,
     })
     const gasData = await parseResponse(gasRes)
@@ -271,7 +273,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
       if (snapshotTaken) {
         // Snapshot exists → sheet may have been partially or fully written → revert
         try {
-          await doRevert(url, secretKey)
+          await doRevert(url, secretKey, sheetName)
         } catch (revertErr) {
           await saveState({ running: false, progress: 0, status: '', result: { cancelled: true, revertFailed: true, error: revertErr.message } })
           badgeError()
