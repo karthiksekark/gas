@@ -10,10 +10,12 @@
 //   2b. Cancel triggered → POST action=revertSnapshot
 //       (GAS restores _snapshot → Sheet1, then deletes _snapshot tab)
 
-const JIRA_TZ   = 'America/New_York'
-const JIRA_MAX  = 50
-const STATE_KEY = 'gas_sync_state'
-const NOTIF_ID  = 'gas-trigger-sync'
+const JIRA_TZ          = 'America/New_York'
+const JIRA_MAX         = 50
+const STATE_KEY        = 'gas_sync_state'
+const NOTIF_ID         = 'gas-trigger-sync'
+const WRITE_TIMEOUT_MS  = 5 * 60 * 1000   // 5 min — GAS execution ceiling
+const REVERT_TIMEOUT_MS = 2 * 60 * 1000   // 2 min for revert/snapshot ops
 
 // ── Per-sync mutable state ─────────────────────────────────────────────────
 let syncAbortController = null
@@ -93,6 +95,17 @@ function buildGetUrl(url, action, secretKey) {
   return `${url}${sep}action=${action}${secretKey ? `&key=${encodeURIComponent(secretKey)}` : ''}`
 }
 
+// Races a fetch against a timer. Resolves { timedOut: true } if the timer
+// fires first. Propagates AbortError immediately so cancel still works.
+function fetchWithTimeout(url, options, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve({ timedOut: true }), ms)
+    fetch(url, options)
+      .then(res => { clearTimeout(timer); resolve(res) })
+      .catch(err => { clearTimeout(timer); reject(err) })
+  })
+}
+
 async function parseResponse(res) {
   const text = await res.text()
   try { return JSON.parse(text) }
@@ -112,12 +125,23 @@ async function getJiraSessionCookie(jiraBaseUrl) {
 }
 
 // ── GAS POST helper (always fresh fetch — no abort signal) ────────────────
-function gasPost(url, secretKey, action, extra = {}) {
-  return fetch(url, {
+// Pass timeoutMs > 0 to race the request against a hard deadline.
+function gasPost(url, secretKey, action, extra = {}, timeoutMs = 0) {
+  const p = fetch(url, {
     method:  'POST',
     headers: { 'Content-Type': 'text/plain' },
     body:    JSON.stringify({ action, key: secretKey || undefined, ...extra }),
   }).then(parseResponse)
+  if (!timeoutMs) return p
+  return Promise.race([
+    p,
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`${action} timed out after ${Math.round(timeoutMs / 60000)} min`)),
+        timeoutMs,
+      )
+    ),
+  ])
 }
 
 // ── Revert logic ───────────────────────────────────────────────────────────
@@ -125,7 +149,7 @@ async function doRevert(url, secretKey) {
   badgeReverting()
   tellPopup('SYNC_PROGRESS', { progress: 0, status: 'Reverting sheet to pre-sync state…', phase: 'reverting' })
 
-  const revertData = await gasPost(url, secretKey, 'revertSnapshot')
+  const revertData = await gasPost(url, secretKey, 'revertSnapshot', {}, REVERT_TIMEOUT_MS)
 
   if (revertData.success) {
     const msg = revertData.noSnapshot
@@ -230,19 +254,25 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
 
     // ── Step 4: write to GAS ──────────────────────────────────────────────
     await broadcastProgress(65, 'Writing to Google Sheet…')
-    const gasRes  = await fetch(url, {
+    const gasResOrTimeout = await fetchWithTimeout(url, {
       method:  'POST',
       headers: { 'Content-Type': 'text/plain' },
       body:    JSON.stringify({ action: 'syncJira', issuesByDate, key: secretKey || undefined }),
       signal,
-    })
-    const gasData = await parseResponse(gasRes)
+    }, WRITE_TIMEOUT_MS)
 
-    // Cancel check after write — handles cancel arriving mid-request
-    if (cancelRequested) throw Object.assign(new DOMException('Cancelled', 'AbortError'), { cancelled: true })
-
-    if (!gasData.success) {
-      throw Object.assign(new Error(gasData.error || 'Sync failed'), { code: gasData.code })
+    let gasData
+    if (gasResOrTimeout.timedOut) {
+      // GAS finished writing (data visible in sheet) but the HTTP response
+      // never arrived within 5 min. Treat as success so the badge clears.
+      gasData = { success: true, stats: {}, timedOut: true }
+    } else {
+      gasData = await parseResponse(gasResOrTimeout)
+      // Cancel check after write — handles cancel arriving mid-request
+      if (cancelRequested) throw Object.assign(new DOMException('Cancelled', 'AbortError'), { cancelled: true })
+      if (!gasData.success) {
+        throw Object.assign(new Error(gasData.error || 'Sync failed'), { code: gasData.code })
+      }
     }
 
     // ── Step 5: delete snapshot (sync succeeded) ──────────────────────────
@@ -251,7 +281,9 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
 
     // ── Success ───────────────────────────────────────────────────────────
     const st      = gasData.stats || {}
-    const summary = `${st.inserted || 0} inserted, ${st.updated || 0} updated, ${st.moved || 0} moved, ${st.skipped || 0} skipped`
+    const summary = gasData.timedOut
+      ? 'sheet written — response timed out (data was saved)'
+      : `${st.inserted || 0} inserted, ${st.updated || 0} updated, ${st.moved || 0} moved, ${st.skipped || 0} skipped`
     const result  = { success: true, stats: { ...st, perDate }, message: `Sync complete — ${summary}` }
 
     await saveState({ running: false, progress: 100, status: '', result })
