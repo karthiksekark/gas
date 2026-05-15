@@ -55,7 +55,6 @@ export default function App() {
         <SyncPanel
           url={prefs.url}
           secretKey={prefs.secretKey || ''}
-          sheetName={prefs.sheetName || ''}
           jiraBaseUrl={prefs.jiraBaseUrl || ''}
           jiraJqlQuery={prefs.jiraJqlQuery || ''}
         />

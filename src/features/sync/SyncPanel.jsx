@@ -13,7 +13,7 @@ function sendToWorker(type, payload = {}) {
   })
 }
 
-export default function SyncPanel({ url, secretKey, sheetName, jiraBaseUrl, jiraJqlQuery }) {
+export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
   const [loading, setLoading]             = useState(false)
   const [phase, setPhase]                 = useState('idle') // 'idle' | 'syncing' | 'reverting'
   const [syncProgress, setSyncProgress]   = useState(0)
@@ -96,7 +96,7 @@ export default function SyncPanel({ url, secretKey, sheetName, jiraBaseUrl, jira
     setDetectedDates([])
     setCookieFound(null)
 
-    const response = await sendToWorker('START_SYNC', { url, secretKey, sheetName, jiraBaseUrl, jiraJqlQuery })
+    const response = await sendToWorker('START_SYNC', { url, secretKey, jiraBaseUrl, jiraJqlQuery })
     if (!response?.ok) {
       setLoading(false)
       const reason = response?.reason === 'already_running'
@@ -104,7 +104,7 @@ export default function SyncPanel({ url, secretKey, sheetName, jiraBaseUrl, jira
         : 'Could not reach background worker.'
       setResult({ success: false, error: reason })
     }
-  }, [isJiraConfigured, loading, url, secretKey, sheetName, jiraBaseUrl, jiraJqlQuery])
+  }, [isJiraConfigured, loading, url, secretKey, jiraBaseUrl, jiraJqlQuery])
 
   const doCancelSync = useCallback(() => {
     if (phase === 'reverting') return  // already reverting — ignore

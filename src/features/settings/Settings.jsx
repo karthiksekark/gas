@@ -4,7 +4,6 @@ import styles from './Settings.module.scss'
 export default function Settings({ prefs, onUpdate, onClose }) {
   const [localUrl, setLocalUrl]         = useState(prefs.url || '')
   const [localSecret, setLocalSecret]   = useState(prefs.secretKey || '')
-  const [sheetName, setSheetName]       = useState(prefs.sheetName || '')
   const [localMethod, setLocalMethod]   = useState(prefs.requestMethod || 'GET')
   const [localHeaders, setLocalHeaders] = useState(prefs.customHeaders || '')
   const [jiraBaseUrl, setJiraBaseUrl]   = useState(prefs.jiraBaseUrl || '')
@@ -16,7 +15,6 @@ export default function Settings({ prefs, onUpdate, onClose }) {
     onUpdate({
       url:           localUrl.trim(),
       secretKey:     localSecret.trim(),
-      sheetName:     sheetName.trim(),
       requestMethod: localMethod,
       customHeaders: localHeaders.trim(),
       jiraBaseUrl:   jiraBaseUrl.trim().replace(/\/$/, ''),
@@ -80,24 +78,6 @@ export default function Settings({ prefs, onUpdate, onClose }) {
               Must match{' '}
               <code className={styles.code}>SECRET_KEY</code>
               {' '}in Code.gs
-            </span>
-          </div>
-
-          <div className={styles.fieldGroup}>
-            <label className={styles.label}>
-              Sheet Name{' '}
-              <span className={styles.labelNote}>— optional, leave blank for first sheet</span>
-            </label>
-            <input
-              className={styles.input}
-              type="text"
-              placeholder="Sheet1"
-              value={sheetName}
-              onChange={(e) => setSheetName(e.target.value)}
-            />
-            <span className={styles.hint}>
-              Tab name exactly as it appears in your Google Sheet (case-sensitive).
-              Leave blank to always target the left-most tab.
             </span>
           </div>
 
