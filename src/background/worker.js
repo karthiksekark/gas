@@ -277,10 +277,13 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
 
     // ── Step 5: delete snapshot (sync succeeded) ──────────────────────────
     await broadcastProgress(90, 'Cleaning up…')
-    // Fire-and-forget — cleanup is non-critical and GAS may still be slow
-    // to respond after a large write. The next sync's takeSnapshot removes
-    // any leftover _snapshot tab if this request doesn't reach GAS.
-    gasPost(url, secretKey, 'deleteSnapshot', {}, 60_000).catch(() => {})
+    try {
+      // Non-critical cleanup — if GAS is still slow to respond, a 30-second
+      // timeout prevents this from blocking the success signals below.
+      await gasPost(url, secretKey, 'deleteSnapshot', {}, 30_000)
+    } catch (_) {
+      // Snapshot tab may remain in the sheet, but the sync data was written.
+    }
 
     // ── Success ───────────────────────────────────────────────────────────
     const st      = gasData.stats || {}
