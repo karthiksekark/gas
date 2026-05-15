@@ -277,13 +277,10 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
 
     // ── Step 5: delete snapshot (sync succeeded) ──────────────────────────
     await broadcastProgress(90, 'Cleaning up…')
-    try {
-      // Non-critical cleanup — if GAS is still slow to respond, a 30-second
-      // timeout prevents this from blocking the success signals below.
-      await gasPost(url, secretKey, 'deleteSnapshot', {}, 30_000)
-    } catch (_) {
-      // Snapshot tab may remain in the sheet, but the sync data was written.
-    }
+    // Fire-and-forget — cleanup is non-critical and GAS may still be slow
+    // to respond after a large write. The next sync's takeSnapshot removes
+    // any leftover _snapshot tab if this request doesn't reach GAS.
+    gasPost(url, secretKey, 'deleteSnapshot', {}, 60_000).catch(() => {})
 
     // ── Success ───────────────────────────────────────────────────────────
     const st      = gasData.stats || {}
@@ -352,9 +349,45 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
     case 'CANCEL_SYNC': {
       cancelRequested = true
-      if (syncAbortController) syncAbortController.abort()
-      sendResponse({ ok: true })
-      return false
+      if (syncAbortController) {
+        // Sync is active in this worker — abort the live fetch.
+        // The catch block inside startSync will handle doRevert if needed.
+        syncAbortController.abort()
+        sendResponse({ ok: true })
+        return false
+      }
+      // syncAbortController is null: either no sync is running, or the worker
+      // was restarted mid-sync (MV3 can kill the worker between async ops),
+      // resetting all in-memory state. Check persisted state and revert directly.
+      ;(async () => {
+        const state = await loadState()
+        if (!state?.running) {
+          sendResponse({ ok: true })
+          return
+        }
+        // Worker was restarted mid-sync — retrieve prefs and attempt revert.
+        // GAS's revertSnapshot handles the no-snapshot case (returns noSnapshot:true),
+        // so it is safe to call regardless of whether a snapshot was taken.
+        const stored = await chrome.storage.sync.get(['gas_trigger_preferences'])
+        const prefs  = stored.gas_trigger_preferences || {}
+        if (!prefs.url) {
+          await saveState({ running: false, progress: 0, status: '', result: { cancelled: true, reverted: false } })
+          badgeClear()
+          tellPopup('SYNC_COMPLETE', { cancelled: true, reverted: false })
+          sendResponse({ ok: true })
+          return
+        }
+        try {
+          await doRevert(prefs.url, prefs.secretKey || '')
+        } catch (revertErr) {
+          await saveState({ running: false, progress: 0, status: '', result: { cancelled: true, revertFailed: true, error: revertErr.message } })
+          badgeError()
+          notify('GAS Trigger — Revert Failed ✗', 'The _snapshot tab in your sheet was preserved for manual recovery.')
+          tellPopup('SYNC_COMPLETE', { cancelled: true, revertFailed: true, error: revertErr.message })
+        }
+        sendResponse({ ok: true })
+      })()
+      return true  // keep the message channel open for the async sendResponse
     }
 
     case 'GET_SYNC_STATE': {
