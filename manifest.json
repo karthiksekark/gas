@@ -25,7 +25,8 @@
   "permissions": [
     "storage",
     "cookies",
-    "notifications"
+    "notifications",
+    "alarms"
   ],
   "host_permissions": [
     "https://script.google.com/*",
