@@ -173,6 +173,13 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
   syncPayload         = { url, secretKey }
   const { signal }    = syncAbortController
 
+  // MV3 Heisenbug: without DevTools attached, Chrome lets the service worker
+  // event loop go "idle" while awaiting a long fetch, and stops delivering
+  // network responses to promise callbacks — even though the worker is alive
+  // (setTimeout still fires via a separate wake path). A periodic storage read
+  // keeps the event loop active so GAS fetch responses are delivered promptly.
+  const keepAlive = setInterval(() => chrome.storage.local.get(STATE_KEY), 20_000)
+
   badgeRunning()
 
   try {
@@ -354,6 +361,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
       tellPopup('SYNC_COMPLETE', { success: false, error: err.message, code: err.code })
     }
   } finally {
+    clearInterval(keepAlive)
     syncAbortController = null
     syncPayload         = null
   }
