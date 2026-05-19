@@ -91,9 +91,12 @@ function toJiraDate(rawDate) {
 }
 
 // ── HTTP helpers ───────────────────────────────────────────────────────────
-function buildGetUrl(url, action, secretKey) {
+function buildGetUrl(url, action, secretKey, sheetId, sheetName) {
   const sep = url.includes('?') ? '&' : '?'
-  return `${url}${sep}action=${action}${secretKey ? `&key=${encodeURIComponent(secretKey)}` : ''}`
+  let result = `${url}${sep}action=${action}${secretKey ? `&key=${encodeURIComponent(secretKey)}` : ''}`
+  if (sheetId)   result += `&spreadsheetId=${encodeURIComponent(sheetId)}`
+  if (sheetName) result += `&sheetName=${encodeURIComponent(sheetName)}`
+  return result
 }
 
 // Races a fetch against a timer. Resolves { timedOut: true } if the timer
@@ -146,11 +149,13 @@ function gasPost(url, secretKey, action, extra = {}, timeoutMs = 0) {
 }
 
 // ── Revert logic ───────────────────────────────────────────────────────────
-async function doRevert(url, secretKey) {
+async function doRevert(url, secretKey, sheetId, sheetName) {
   badgeReverting()
   tellPopup('SYNC_PROGRESS', { progress: 0, status: 'Reverting sheet to pre-sync state…', phase: 'reverting' })
 
-  const revertData = await gasPost(url, secretKey, 'revertSnapshot', {}, REVERT_TIMEOUT_MS)
+  const revertData = await gasPost(url, secretKey, 'revertSnapshot',
+    { spreadsheetId: sheetId || undefined, sheetName: sheetName || undefined },
+    REVERT_TIMEOUT_MS)
 
   if (revertData.success) {
     const msg = revertData.noSnapshot
@@ -166,11 +171,11 @@ async function doRevert(url, secretKey) {
 }
 
 // ── Main sync function ─────────────────────────────────────────────────────
-async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
+async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, sheetName }) {
   cancelRequested     = false
   snapshotTaken       = false
   syncAbortController = new AbortController()
-  syncPayload         = { url, secretKey }
+  syncPayload         = { url, secretKey, sheetId, sheetName }
   const { signal }    = syncAbortController
 
   // MV3 Heisenbug: without DevTools attached, Chrome lets the service worker
@@ -185,7 +190,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
   try {
     // ── Step 1: read dates from GAS ───────────────────────────────────────
     await broadcastProgress(0, 'Reading dates from sheet…')
-    const datesRes  = await fetch(buildGetUrl(url, 'getDates', secretKey), { signal })
+    const datesRes  = await fetch(buildGetUrl(url, 'getDates', secretKey, sheetId, sheetName), { signal })
     const datesData = await parseResponse(datesRes)
 
     if (datesData?.error === 'Unauthorized' || datesData?.code === 401) {
@@ -254,7 +259,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
 
     // ── Step 3: snapshot (before any sheet mutations) ─────────────────────
     await broadcastProgress(62, 'Taking sheet snapshot…')
-    const snapData = await fetch(buildGetUrl(url, 'takeSnapshot', secretKey), { signal }).then(parseResponse)
+    const snapData = await fetch(buildGetUrl(url, 'takeSnapshot', secretKey, sheetId, sheetName), { signal }).then(parseResponse)
     if (snapData.success) snapshotTaken = true
 
     // Final cancel gate — after snapshot, before write
@@ -274,7 +279,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
       const gasResOrTimeout = await fetchWithTimeout(url, {
         method:  'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body:    JSON.stringify({ action: 'syncJira', issuesByDate, key: secretKey || undefined }),
+        body:    JSON.stringify({ action: 'syncJira', issuesByDate, key: secretKey || undefined, spreadsheetId: sheetId || undefined, sheetName: sheetName || undefined }),
         signal,
       }, WRITE_TIMEOUT_MS)
 
@@ -312,7 +317,8 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
     // Fire-and-forget — cleanup is non-critical and GAS may still be slow
     // to respond after a large write. The next sync's takeSnapshot removes
     // any leftover _snapshot tab if this request doesn't reach GAS.
-    gasPost(url, secretKey, 'deleteSnapshot', {}, 60_000).catch(() => {})
+    gasPost(url, secretKey, 'deleteSnapshot',
+      { spreadsheetId: sheetId || undefined, sheetName: sheetName || undefined }, 60_000).catch(() => {})
 
     // ── Success ───────────────────────────────────────────────────────────
     const st      = gasData.stats || {}
@@ -338,7 +344,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
       if (snapshotTaken) {
         // Snapshot exists → sheet may have been partially or fully written → revert
         try {
-          await doRevert(url, secretKey)
+          await doRevert(url, secretKey, sheetId, sheetName)
         } catch (revertErr) {
           await saveState({ running: false, progress: 0, status: '', result: { cancelled: true, revertFailed: true, error: revertErr.message } })
           badgeError()
@@ -389,7 +395,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   tellPopup('SYNC_COMPLETE', { success: true, result })
 
   if (prefs.url) {
-    gasPost(prefs.url, prefs.secretKey || '', 'deleteSnapshot', {}, 60_000).catch(() => {})
+    gasPost(prefs.url, prefs.secretKey || '', 'deleteSnapshot',
+      { spreadsheetId: prefs.sheetId || undefined, sheetName: prefs.sheetName || undefined }, 60_000).catch(() => {})
     chrome.storage.sync.set({ gas_trigger_preferences: { ...prefs, lastUsed: new Date().toISOString() } })
   }
 })
@@ -438,7 +445,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           return
         }
         try {
-          await doRevert(prefs.url, prefs.secretKey || '')
+          await doRevert(prefs.url, prefs.secretKey || '', prefs.sheetId || '', prefs.sheetName || '')
         } catch (revertErr) {
           await saveState({ running: false, progress: 0, status: '', result: { cancelled: true, revertFailed: true, error: revertErr.message } })
           badgeError()

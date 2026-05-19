@@ -13,7 +13,7 @@ function sendToWorker(type, payload = {}) {
   })
 }
 
-export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery }) {
+export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, sheetName }) {
   const [loading, setLoading]             = useState(false)
   const [phase, setPhase]                 = useState('idle') // 'idle' | 'syncing' | 'reverting'
   const [syncProgress, setSyncProgress]   = useState(0)
@@ -96,7 +96,7 @@ export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery })
     setDetectedDates([])
     setCookieFound(null)
 
-    const response = await sendToWorker('START_SYNC', { url, secretKey, jiraBaseUrl, jiraJqlQuery })
+    const response = await sendToWorker('START_SYNC', { url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, sheetName })
     if (!response?.ok) {
       setLoading(false)
       const reason = response?.reason === 'already_running'
@@ -104,7 +104,7 @@ export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery })
         : 'Could not reach background worker.'
       setResult({ success: false, error: reason })
     }
-  }, [isJiraConfigured, loading, url, secretKey, jiraBaseUrl, jiraJqlQuery])
+  }, [isJiraConfigured, loading, url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, sheetName])
 
   const doCancelSync = useCallback(() => {
     if (phase === 'reverting') return  // already reverting — ignore
@@ -144,6 +144,18 @@ export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery })
           <div className={styles.configRow}>
             <span className={styles.configLabel}>JSESSIONID</span>
             <span className={`${styles.configVal} ${cookieClass}`}>{cookieText}</span>
+          </div>
+          <div className={styles.configRow}>
+            <span className={styles.configLabel}>Sheet</span>
+            <span className={styles.configVal}>
+              {sheetId ? `…${sheetId.slice(-8)}` : 'Script\'s own sheet'}
+            </span>
+          </div>
+          <div className={styles.configRow}>
+            <span className={styles.configLabel}>Tab</span>
+            <span className={styles.configVal}>
+              {sheetName || 'First visible tab'}
+            </span>
           </div>
           <div className={styles.divider} />
           <div className={styles.jqlLabel}>JQL Template</div>

@@ -57,6 +57,8 @@ export default function App() {
           secretKey={prefs.secretKey || ''}
           jiraBaseUrl={prefs.jiraBaseUrl || ''}
           jiraJqlQuery={prefs.jiraJqlQuery || ''}
+          sheetId={prefs.sheetId || ''}
+          sheetName={prefs.sheetName || ''}
         />
       </main>
 
