@@ -27,6 +27,10 @@ const BLANK_VAL  = '—'
 const DUP_SUFFIX = ' modified'
 const JIRA_BASE_URL = 'https://yourorg.atlassian.net'
 
+// Per-request spreadsheet context — populated by doGet/doPost from incoming params.
+var _spreadsheetId = null
+var _sheetName     = null
+
 // ── Responses ──
 function respond(d) {
   return ContentService.createTextOutput(JSON.stringify(d))
@@ -39,17 +43,29 @@ function ok(d)       { return respond(Object.assign({ success:true }, d)) }
 
 function validateKey(k) { return k === SECRET_KEY }
 
+// Opens the spreadsheet referenced by the request, or the bound one as fallback.
+function getSpreadsheet() {
+  return _spreadsheetId
+    ? SpreadsheetApp.openById(_spreadsheetId)
+    : SpreadsheetApp.getActiveSpreadsheet()
+}
+
 // Returns only non-hidden sheets, preserving their left-to-right order.
 function getVisibleSheets() {
-  return SpreadsheetApp.getActiveSpreadsheet().getSheets().filter(function(s) {
+  return getSpreadsheet().getSheets().filter(function(s) {
     return !s.isSheetHidden()
   })
 }
 
-// Targets the first visible (non-hidden) sheet by position.
+// Targets the tab named _sheetName, or the first visible tab when _sheetName is unset.
 function getSheet() {
   var sheets = getVisibleSheets()
   if (!sheets.length) throw new Error('No visible sheets found in spreadsheet')
+  if (_sheetName) {
+    var match = sheets.filter(function(s) { return s.getName() === _sheetName })
+    if (!match.length) throw new Error('Tab "' + _sheetName + '" not found or is hidden')
+    return match[0]
+  }
   return sheets[0]
 }
 
@@ -584,7 +600,7 @@ var SNAPSHOT_SHEET = '_snapshot'
 
 function takeSnapshot() {
   try {
-    var ss    = SpreadsheetApp.getActiveSpreadsheet()
+    var ss    = getSpreadsheet()
     var sheet = getSheet()
 
     // Remove any stale snapshot from a previous aborted run
@@ -611,7 +627,7 @@ function takeSnapshot() {
 
 function revertSnapshot() {
   try {
-    var ss    = SpreadsheetApp.getActiveSpreadsheet()
+    var ss    = getSpreadsheet()
     var sheet = getSheet()
     var snap  = ss.getSheetByName(SNAPSHOT_SHEET)
 
@@ -651,7 +667,7 @@ function revertSnapshot() {
 
 function deleteSnapshot() {
   try {
-    var ss   = SpreadsheetApp.getActiveSpreadsheet()
+    var ss   = getSpreadsheet()
     var snap = ss.getSheetByName(SNAPSHOT_SHEET)
     if (snap) ss.deleteSheet(snap)
     return ok({ message: 'Snapshot deleted' })
@@ -660,9 +676,11 @@ function deleteSnapshot() {
 
 // ── Entry points ──
 function doGet(e) {
-  var key=e.parameter&&e.parameter.key?e.parameter.key:null
+  var key = e.parameter && e.parameter.key ? e.parameter.key : null
   if (!validateKey(key)) return unauth()
-  switch((e.parameter&&e.parameter.action)||'read') {
+  _spreadsheetId = (e.parameter && e.parameter.spreadsheetId) || null
+  _sheetName     = (e.parameter && e.parameter.sheetName)     || null
+  switch ((e.parameter && e.parameter.action) || 'read') {
     case 'read':         return readAll()
     case 'getDates':     return getDates()
     case 'takeSnapshot': return takeSnapshot()
@@ -671,12 +689,14 @@ function doGet(e) {
 }
 
 function doPost(e) {
-  var body={}
-  try{body=JSON.parse(e.postData.contents)}catch(_){return badReq('Invalid JSON')}
-  if (!validateKey(body.key||null)) return unauth()
-  switch(body.action) {
+  var body = {}
+  try { body = JSON.parse(e.postData.contents) } catch(_) { return badReq('Invalid JSON') }
+  if (!validateKey(body.key || null)) return unauth()
+  _spreadsheetId = body.spreadsheetId || null
+  _sheetName     = body.sheetName     || null
+  switch (body.action) {
     case 'create':         return createRow(body.data)
-    case 'update':         return updateRow(body.id, body.data||{})
+    case 'update':         return updateRow(body.id, body.data || {})
     case 'delete':         return deleteRow(body.id)
     case 'syncJira':       return syncJira(body.issuesByDate)
     case 'revertSnapshot': return revertSnapshot()

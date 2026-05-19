@@ -8,6 +8,8 @@ export default function Settings({ prefs, onUpdate, onClose }) {
   const [localHeaders, setLocalHeaders] = useState(prefs.customHeaders || '')
   const [jiraBaseUrl, setJiraBaseUrl]   = useState(prefs.jiraBaseUrl || '')
   const [jiraJqlQuery, setJiraJqlQuery] = useState(prefs.jiraJqlQuery || '')
+  const [localSheetId,   setLocalSheetId]   = useState(prefs.sheetId   || '')
+  const [localSheetName, setLocalSheetName] = useState(prefs.sheetName || '')
   const [showSecret, setShowSecret]     = useState(false)
   const [saved, setSaved]               = useState(false)
 
@@ -19,6 +21,8 @@ export default function Settings({ prefs, onUpdate, onClose }) {
       customHeaders: localHeaders.trim(),
       jiraBaseUrl:   jiraBaseUrl.trim().replace(/\/$/, ''),
       jiraJqlQuery:  jiraJqlQuery.trim(),
+      sheetId:       localSheetId.trim(),
+      sheetName:     localSheetName.trim(),
     })
     setSaved(true)
     setTimeout(() => { setSaved(false); onClose() }, 800)
@@ -78,6 +82,43 @@ export default function Settings({ prefs, onUpdate, onClose }) {
               Must match{' '}
               <code className={styles.code}>SECRET_KEY</code>
               {' '}in Code.gs
+            </span>
+          </div>
+
+          <div className={styles.fieldGroup}>
+            <label className={styles.label}>
+              Sheet ID{' '}
+              <span className={styles.labelNote}>— optional</span>
+            </label>
+            <input
+              className={styles.input}
+              type="text"
+              placeholder="Paste the ID from the sheet's URL"
+              value={localSheetId}
+              onChange={(e) => setLocalSheetId(e.target.value)}
+            />
+            <span className={styles.hint}>
+              Found in the URL:{' '}
+              <code className={styles.code}>docs.google.com/spreadsheets/d/<strong>ID</strong>/edit</code>
+              <br />
+              Leave blank if the script is bound directly to the sheet.
+            </span>
+          </div>
+
+          <div className={styles.fieldGroup}>
+            <label className={styles.label}>
+              Tab Name{' '}
+              <span className={styles.labelNote}>— optional</span>
+            </label>
+            <input
+              className={styles.input}
+              type="text"
+              placeholder="Sheet1"
+              value={localSheetName}
+              onChange={(e) => setLocalSheetName(e.target.value)}
+            />
+            <span className={styles.hint}>
+              Exact name of the tab to sync. Defaults to the first visible tab if blank.
             </span>
           </div>
 
