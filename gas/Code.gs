@@ -115,8 +115,9 @@ function styleDateRow(sheet, row, count) {
   // Col B — empty, already styled above
   // Col C — "Total Tickets" label
   sheet.getRange(row, DATE_LABEL_COL).setValue('Total Tickets')
-  // Col D — count
-  sheet.getRange(row, DATE_COUNT_COL).setValue(count)
+  // Col D — count; explicitly plain-number format so the date-formatted column
+  // doesn't render e.g. 3 as "1/3/1900".
+  sheet.getRange(row, DATE_COUNT_COL).setNumberFormat('0').setValue(count)
   // Col E — empty, already styled above
 }
 
