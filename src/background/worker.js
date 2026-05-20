@@ -204,13 +204,19 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
         if (startAt >= total || !(jiraData.issues || []).length) break
       }
 
-      issuesByDate[rawDate] = allIssues.map((issue) => ({
-        'Ticket Number': issue.key || '',
-        'Title':         issue.fields?.summary || '',
-        'Status':        issue.fields?.status?.name || 'unknown',
-        'Due Date':      rawDate,
-        'Deploy Paths':  issue.fields?.[JIRA_DEPLOY_PATHS_FIELD] || '',
-      }))
+      issuesByDate[rawDate] = allIssues.map((issue) => {
+        const rawPaths = issue.fields?.[JIRA_DEPLOY_PATHS_FIELD]
+        const allPaths = Array.isArray(rawPaths)
+          ? rawPaths.join('\n')
+          : (rawPaths || '')
+        return {
+          'Ticket Number':        issue.key || '',
+          'Title':                issue.fields?.summary || '',
+          'Status':               issue.fields?.status?.name || 'unknown',
+          'Due Date':             rawDate,
+          'Content Release Paths': allPaths,
+        }
+      })
       perDate.push({ date: rawDate, jiraDate, issues: allIssues.length })
     }
 
