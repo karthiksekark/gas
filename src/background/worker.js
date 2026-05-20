@@ -5,6 +5,8 @@
 
 const JIRA_TZ              = 'America/New_York'
 const JIRA_MAX             = 50
+// TODO: replace with the real Jira custom field ID (e.g. customfield_10042)
+const JIRA_DEPLOY_PATHS_FIELD = 'customfield_DEPLOY_PATHS'
 const STATE_KEY            = 'gas_sync_state'
 const NOTIF_ID             = 'gas-trigger-sync'
 const WRITE_TIMEOUT_MS     = 5 * 60 * 1000   // 5 min — GAS execution ceiling
@@ -187,7 +189,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
 
       let allIssues = [], startAt = 0, total = null
       while (true) {
-        const jiraUrl = `${jiraBaseUrl}/rest/api/3/search?jql=${jql}&fields=summary,status,duedate&maxResults=${JIRA_MAX}&startAt=${startAt}`
+        const jiraUrl = `${jiraBaseUrl}/rest/api/3/search?jql=${jql}&fields=summary,status,duedate,${JIRA_DEPLOY_PATHS_FIELD}&maxResults=${JIRA_MAX}&startAt=${startAt}`
         // credentials:'include' is not needed — the Cookie header is set
         // manually above. Including it triggers strict CORS credentialed-
         // request mode, which Jira's CORS policy rejects for extension origins.
@@ -209,6 +211,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
         'Title':         issue.fields?.summary || '',
         'Status':        issue.fields?.status?.name || 'unknown',
         'Due Date':      rawDate,
+        'Deploy Paths':  issue.fields?.[JIRA_DEPLOY_PATHS_FIELD] || '',
       }))
       perDate.push({ date: rawDate, jiraDate, issues: allIssues.length })
     }
