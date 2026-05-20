@@ -4,8 +4,6 @@ import styles from './Settings.module.scss'
 export default function Settings({ prefs, onUpdate, onClose }) {
   const [localUrl, setLocalUrl]         = useState(prefs.url || '')
   const [localSecret, setLocalSecret]   = useState(prefs.secretKey || '')
-  const [localMethod, setLocalMethod]   = useState(prefs.requestMethod || 'GET')
-  const [localHeaders, setLocalHeaders] = useState(prefs.customHeaders || '')
   const [jiraBaseUrl, setJiraBaseUrl]   = useState(prefs.jiraBaseUrl || '')
   const [jiraJqlQuery, setJiraJqlQuery] = useState(prefs.jiraJqlQuery || '')
   const [localSheetId,   setLocalSheetId]   = useState(prefs.sheetId   || '')
@@ -15,14 +13,12 @@ export default function Settings({ prefs, onUpdate, onClose }) {
 
   const handleSave = () => {
     onUpdate({
-      url:           localUrl.trim(),
-      secretKey:     localSecret.trim(),
-      requestMethod: localMethod,
-      customHeaders: localHeaders.trim(),
-      jiraBaseUrl:   jiraBaseUrl.trim().replace(/\/$/, ''),
-      jiraJqlQuery:  jiraJqlQuery.trim(),
-      sheetId:       localSheetId.trim(),
-      sheetName:     localSheetName.trim(),
+      url:          localUrl.trim(),
+      secretKey:    localSecret.trim(),
+      jiraBaseUrl:  jiraBaseUrl.trim().replace(/\/$/, ''),
+      jiraJqlQuery: jiraJqlQuery.trim(),
+      sheetId:      localSheetId.trim(),
+      sheetName:    localSheetName.trim(),
     })
     setSaved(true)
     setTimeout(() => { setSaved(false); onClose() }, 800)
@@ -157,38 +153,6 @@ export default function Settings({ prefs, onUpdate, onClose }) {
             </span>
           </div>
 
-          <div className={styles.divider} />
-
-          {/* ── Request ── */}
-          <span className={styles.sectionLabel}>Request</span>
-
-          <div className={styles.fieldGroup}>
-            <label className={styles.label}>Default HTTP Method</label>
-            <div className={styles.methodRow}>
-              {['GET', 'POST'].map((m) => (
-                <button
-                  key={m}
-                  className={`${styles.methodBtn} ${localMethod === m ? styles.methodBtnActive : ''}`}
-                  onClick={() => setLocalMethod(m)}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className={styles.fieldGroup}>
-            <label className={styles.label}>
-              Custom Headers{' '}
-              <span className={styles.labelNote}>(optional)</span>
-            </label>
-            <textarea
-              className={styles.textarea}
-              placeholder="Content-Type: application/json"
-              value={localHeaders}
-              onChange={(e) => setLocalHeaders(e.target.value)}
-            />
-          </div>
         </div>
 
         <div className={styles.footer}>

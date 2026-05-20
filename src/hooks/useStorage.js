@@ -5,9 +5,6 @@ const STORAGE_KEY = 'gas_trigger_preferences'
 const defaultPrefs = {
   url: '',
   lastUsed: null,
-  requestMethod: 'GET',
-  customHeaders: '',
-  requestBody: '',
   secretKey: '',
   jiraBaseUrl: '',
   jiraJqlQuery: '',
