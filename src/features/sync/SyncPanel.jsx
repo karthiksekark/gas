@@ -15,7 +15,6 @@ function sendToWorker(type, payload = {}) {
 
 export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, sheetName }) {
   const [loading, setLoading]             = useState(false)
-  const [phase, setPhase]                 = useState('idle') // 'idle' | 'syncing' | 'reverting'
   const [syncProgress, setSyncProgress]   = useState(0)
   const [syncStatus, setSyncStatus]       = useState('')
   const [result, setResult]               = useState(null)
@@ -31,7 +30,6 @@ export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery, s
       if (!state) return
       if (state.running) {
         setLoading(true)
-        setPhase(state.phase === 'reverting' ? 'reverting' : 'syncing')
         setSyncProgress(state.progress || 0)
         setSyncStatus(state.status || 'Syncing…')
         if (state.dates) setDetectedDates(state.dates)
@@ -44,29 +42,16 @@ export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery, s
     // Listen for live updates from the worker
     const onMessage = (message) => {
       if (message.type === 'SYNC_PROGRESS') {
-        const { progress, status, dates, cookieFound: cf, phase: ph } = message.payload
+        const { progress, status, dates, cookieFound: cf } = message.payload
         setSyncProgress(progress)
         setSyncStatus(status)
-        if (ph) setPhase(ph)
         if (dates) setDetectedDates(dates)
         if (cf != null) setCookieFound(cf)
       } else if (message.type === 'SYNC_COMPLETE') {
         setLoading(false)
-        setPhase('idle')
         setSyncProgress(0)
         setSyncStatus('')
-        if (message.payload.cancelled) {
-          if (message.payload.revertFailed) {
-            setResult({
-              success: false,
-              error:   'Revert failed — the _snapshot tab in your sheet was preserved for manual recovery.',
-            })
-          } else {
-            setResult(null)
-          }
-        } else {
-          applyResult(message.payload)
-        }
+        applyResult(message.payload)
       }
     }
 
@@ -88,7 +73,6 @@ export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery, s
   const doJiraSync = useCallback(async () => {
     if (!isJiraConfigured || loading) return
     setLoading(true)
-    setPhase('syncing')
     setResult(null)
     setSyncStats(null)
     setSyncProgress(0)
@@ -105,13 +89,6 @@ export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery, s
       setResult({ success: false, error: reason })
     }
   }, [isJiraConfigured, loading, url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, sheetName])
-
-  const doCancelSync = useCallback(() => {
-    if (phase === 'reverting') return  // already reverting — ignore
-    sendToWorker('CANCEL_SYNC')
-    setPhase('reverting')
-    setSyncStatus('Cancelling…')
-  }, [phase])
 
   const cookieClass =
     cookieFound === true  ? styles.cookieFound  :
@@ -196,8 +173,8 @@ export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery, s
         </div>
       )}
 
-      {/* Background-sync warning banner */}
-      {loading && phase !== 'reverting' && (
+      {/* Background-sync banner */}
+      {loading && (
         <div className={styles.bgWarning}>
           <span className={styles.bgWarningIcon}>⟳</span>
           <span>
@@ -207,22 +184,10 @@ export default function SyncPanel({ url, secretKey, jiraBaseUrl, jiraJqlQuery, s
         </div>
       )}
 
-      {/* Reverting banner */}
-      {loading && phase === 'reverting' && (
-        <div className={styles.revertWarning}>
-          <span className={styles.revertWarningIcon}>↩</span>
-          <span>Reverting sheet to pre-sync state — please wait.</span>
-        </div>
-      )}
-
-      {/* Action button — Sync, Cancel, or locked Reverting */}
-      {loading && phase === 'reverting' ? (
-        <button className={`${styles.cancelBtn} ${styles.cancelBtnDisabled}`} disabled>
-          ↩ Reverting…
-        </button>
-      ) : loading ? (
-        <button className={styles.cancelBtn} onClick={doCancelSync}>
-          ✕ Cancel Sync
+      {/* Action button */}
+      {loading ? (
+        <button className={`${styles.syncBtn} ${styles.syncBtnDisabled}`} disabled>
+          ⟳ Syncing…
         </button>
       ) : (
         <button
