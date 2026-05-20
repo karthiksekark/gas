@@ -4,14 +4,15 @@
 //  Secret key: GET ?key=<val>  |  POST body.key
 // ============================================================
 
-const SECRET_KEY     = 'your-secret-key-here'
-const COLUMNS        = ['Ticket Number', 'Title', 'Status', 'Due Date', 'Comments']
-const TICKET_IDX     = 0
-const TITLE_IDX      = 1
-const STATUS_IDX     = 2
-const DUEDATE_IDX    = 3
-const COMMENTS_IDX   = 4
-const JIRA_COL_COUNT = 5   // A–E
+const SECRET_KEY        = 'your-secret-key-here'
+const COLUMNS           = ['Ticket Number', 'Title', 'Status', 'Due Date', 'Deploy Paths', 'Comments']
+const TICKET_IDX        = 0
+const TITLE_IDX         = 1
+const STATUS_IDX        = 2
+const DUEDATE_IDX       = 3
+const DEPLOYPATHS_IDX   = 4
+const COMMENTS_IDX      = 5
+const JIRA_COL_COUNT    = 6   // A–F
 
 // Date row styling
 const DATE_ROW_BG    = '#fff9c4'   // yellow — cols A–E on date rows
@@ -171,11 +172,11 @@ function readBlock(sheet, s, e, triggerRow) {
 }
 
 function headerExists(sheet, triggerRow) {
-  if (triggerRow>=sheet.getLastRow()) return false
-  var r=sheet.getRange(triggerRow+1,1,1,JIRA_COL_COUNT).getValues()[0]
-  for (var i=0;i<COLUMNS.length;i++)
-    if (String(r[i]).toLowerCase().trim()!==COLUMNS[i].toLowerCase()) return false
-  return true
+  if (triggerRow >= sheet.getLastRow()) return false
+  // Check col A only so that old 5-column headers are still recognised as
+  // headers and migrated in-place by styleHeader (which writes all COLUMNS).
+  var first = String(sheet.getRange(triggerRow + 1, 1).getValue() || '').toLowerCase().trim()
+  return first === COLUMNS[TICKET_IDX].toLowerCase()
 }
 
 function countRealInBlock(sheet, triggerRow) {
@@ -222,17 +223,19 @@ function applyStatusColor(sheet, row, status) {
 
 function writeJiraRow(sheet, row, vals) {
   writeTicketFormula(sheet, row, String(vals[TICKET_IDX]||'').trim())
-  sheet.getRange(row, TITLE_IDX+1)  .setValue(String(vals[TITLE_IDX]  ||''))
-  sheet.getRange(row, STATUS_IDX+1) .setValue(String(vals[STATUS_IDX] ||''))
-  sheet.getRange(row, DUEDATE_IDX+1).setValue(String(vals[DUEDATE_IDX]||''))
+  sheet.getRange(row, TITLE_IDX+1)       .setValue(String(vals[TITLE_IDX]       ||''))
+  sheet.getRange(row, STATUS_IDX+1)      .setValue(String(vals[STATUS_IDX]      ||''))
+  sheet.getRange(row, DUEDATE_IDX+1)     .setValue(String(vals[DUEDATE_IDX]     ||''))
+  sheet.getRange(row, DEPLOYPATHS_IDX+1) .setValue(String(vals[DEPLOYPATHS_IDX] ||''))
   clearRowStyle(sheet, row)
   applyStatusColor(sheet, row, vals[STATUS_IDX])
 }
 
 function updateJiraFields(sheet, row, vals) {
-  sheet.getRange(row, TITLE_IDX+1)  .setValue(String(vals[TITLE_IDX]  ||''))
-  sheet.getRange(row, STATUS_IDX+1) .setValue(String(vals[STATUS_IDX] ||''))
-  sheet.getRange(row, DUEDATE_IDX+1).setValue(String(vals[DUEDATE_IDX]||''))
+  sheet.getRange(row, TITLE_IDX+1)       .setValue(String(vals[TITLE_IDX]       ||''))
+  sheet.getRange(row, STATUS_IDX+1)      .setValue(String(vals[STATUS_IDX]      ||''))
+  sheet.getRange(row, DUEDATE_IDX+1)     .setValue(String(vals[DUEDATE_IDX]     ||''))
+  sheet.getRange(row, DEPLOYPATHS_IDX+1) .setValue(String(vals[DEPLOYPATHS_IDX] ||''))
   clearRowStyle(sheet, row)
   applyStatusColor(sheet, row, vals[STATUS_IDX])
 }
@@ -372,7 +375,7 @@ function createRow(data) {
     var colA=lr?sheet.getRange(1,1,lr,1).getValues():[]
     var allDates=getAllDates(sheet)
     if (!allDates.length) return respond({success:false,error:'No date cells in column A',code:403})
-    var vals=[data['Ticket Number']||'',data['Title']||'',data['Status']||'active',parseDate(data['Due Date'])||data['Due Date']||'','']
+    var vals=[data['Ticket Number']||'',data['Title']||'',data['Status']||'active',parseDate(data['Due Date'])||data['Due Date']||'',data['Deploy Paths']||'','']
     var inserted=[]
     // Bottom-up
     var triggers=[]
@@ -413,9 +416,10 @@ function updateRow(ticket, data) {
     if (row===-1) return respond({success:false,error:'Not found: '+ticket,code:404})
     var ex=sheet.getRange(row,1,1,JIRA_COL_COUNT).getValues()[0]
     var nv=[ex[TICKET_IDX],
-      data['Title']   !==undefined?data['Title']   :ex[TITLE_IDX],
-      data['Status']  !==undefined?data['Status']  :ex[STATUS_IDX],
-      data['Due Date']!==undefined?(parseDate(data['Due Date'])||data['Due Date']):ex[DUEDATE_IDX],
+      data['Title']        !==undefined?data['Title']        :ex[TITLE_IDX],
+      data['Status']       !==undefined?data['Status']       :ex[STATUS_IDX],
+      data['Due Date']     !==undefined?(parseDate(data['Due Date'])||data['Due Date']):ex[DUEDATE_IDX],
+      data['Deploy Paths'] !==undefined?data['Deploy Paths'] :ex[DEPLOYPATHS_IDX],
       ex[COMMENTS_IDX]]
     updateJiraFields(sheet,row,nv)
     return ok({message:'Updated',ticket:ticket})
@@ -467,29 +471,31 @@ function syncJira(issuesByDate) {
       if (!Array.isArray(issues)) continue
       for (var ii=0;ii<issues.length;ii++) {
         var iss=issues[ii]
-        var ticket =String(iss['Ticket Number']||'').trim()
-        var title  =String(iss['Title']  ||'').trim()
-        var status =String(iss['Status'] ||'unknown').trim()
-        var rawDue =String(iss['Due Date']||'').trim()
+        var ticket      =String(iss['Ticket Number']||'').trim()
+        var title       =String(iss['Title']        ||'').trim()
+        var status      =String(iss['Status']       ||'unknown').trim()
+        var rawDue      =String(iss['Due Date']     ||'').trim()
+        var deployPaths =String(iss['Deploy Paths'] ||'').trim()
         var normDue=parseDate(rawDue)||rawDue
         if (!ticket) continue
         var ex=globalMap[ticket]
         if (!ex) {
           if (!insertBatch[dateKey]) insertBatch[dateKey]=[]
-          insertBatch[dateKey].push([ticket,title,status,normDue,''])
+          insertBatch[dateKey].push([ticket,title,status,normDue,deployPaths,''])
           continue
         }
         if (ex.blockDate!==dateKey) {
-          moveBatch.push({ticket:ticket,newVals:[ticket,title,status,normDue,''],
+          moveBatch.push({ticket:ticket,newVals:[ticket,title,status,normDue,deployPaths,''],
             sourceRowNum:ex.rowNum,sourceTrigger:ex.triggerRow,
             sourceDate:ex.blockDate,destDate:dateKey,fullRow:ex.fullRow})
           continue
         }
         var xv=ex.jiraVals
         var normEx=parseDate(xv[DUEDATE_IDX])||String(xv[DUEDATE_IDX]||'').trim()
-        if (String(xv[TITLE_IDX]||'').trim()!==title||
-            String(xv[STATUS_IDX]||'').trim()!==status||normEx!==normDue)
-          updateBatch.push({rowNum:ex.rowNum,newVals:[ticket,title,status,normDue,xv[COMMENTS_IDX]||''],
+        if (String(xv[TITLE_IDX]      ||'').trim()!==title||
+            String(xv[STATUS_IDX]     ||'').trim()!==status||normEx!==normDue||
+            String(xv[DEPLOYPATHS_IDX]||'').trim()!==deployPaths)
+          updateBatch.push({rowNum:ex.rowNum,newVals:[ticket,title,status,normDue,deployPaths,xv[COMMENTS_IDX]||''],
                             triggerRow:ex.triggerRow})
       }
     }
