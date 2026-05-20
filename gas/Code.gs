@@ -71,11 +71,24 @@ function getSheet() {
 }
 
 // ── Date parsing → M/D/YYYY or null ──
+// Cached per-request so getSpreadsheetTimeZone() is only called once.
+var _sheetTz = null
+function sheetTimezone() {
+  if (!_sheetTz) _sheetTz = getSpreadsheet().getSpreadsheetTimeZone()
+  return _sheetTz
+}
+
 function parseDate(val) {
   if (!val && val !== 0) return null
   if (val instanceof Date) {
     if (isNaN(val.getTime())) return null
-    return (val.getMonth()+1)+'/'+val.getDate()+'/'+val.getFullYear()
+    // getDate()/getMonth()/getFullYear() are UTC-based in GAS. For spreadsheets
+    // in timezones ahead of UTC, midnight local time is the previous UTC day,
+    // causing an off-by-one. Utilities.formatDate respects the spreadsheet TZ.
+    var s = Utilities.formatDate(val, sheetTimezone(), 'M/d/yyyy')
+    var mp = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+    if (!mp || +mp[1]<1||+mp[1]>12||+mp[2]<1||+mp[2]>31||+mp[3]<2000) return null
+    return +mp[1]+'/'+mp[2]+'/'+mp[3]
   }
   var s = String(val).trim()
   var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
