@@ -1,28 +1,15 @@
 // Background service worker — owns the entire sync lifecycle.
-// The popup sends START_SYNC / CANCEL_SYNC and listens for progress events.
+// The popup sends START_SYNC and listens for progress events.
 // State is persisted to chrome.storage.local so the popup can hydrate
 // after being closed and reopened mid-sync.
-//
-// Snapshot flow (sheet revert on cancel):
-//   1. After all JIRA data is fetched but BEFORE the GAS write:
-//      → GET action=takeSnapshot  (GAS copies Sheet1 → hidden _snapshot tab)
-//   2a. Sync succeeds → POST action=deleteSnapshot
-//   2b. Cancel triggered → POST action=revertSnapshot
-//       (GAS restores _snapshot → Sheet1, then deletes _snapshot tab)
 
-const JIRA_TZ          = 'America/New_York'
-const JIRA_MAX         = 50
-const STATE_KEY        = 'gas_sync_state'
-const NOTIF_ID         = 'gas-trigger-sync'
-const WRITE_TIMEOUT_MS  = 5 * 60 * 1000   // 5 min — GAS execution ceiling
-const REVERT_TIMEOUT_MS = 2 * 60 * 1000   // 2 min for revert/snapshot ops
-const WRITE_ALARM_NAME  = 'gas_write_timeout'
-
-// ── Per-sync mutable state ─────────────────────────────────────────────────
-let syncAbortController = null
-let cancelRequested     = false
-let snapshotTaken       = false
-let syncPayload         = null  // kept for revert fetch (no abort signal needed)
+const JIRA_TZ              = 'America/New_York'
+const JIRA_MAX             = 50
+const STATE_KEY            = 'gas_sync_state'
+const NOTIF_ID             = 'gas-trigger-sync'
+const WRITE_TIMEOUT_MS     = 5 * 60 * 1000   // 5 min — GAS execution ceiling
+const WRITE_ALARM_NAME     = 'gas_write_timeout'
+const KEEPALIVE_ALARM_NAME = 'gas_sync_keepalive'
 
 // ── Storage helpers ────────────────────────────────────────────────────────
 function saveState(patch) {
@@ -40,9 +27,6 @@ function badgeSet(text, color) {
 function badgeRunning(step, total) {
   badgeSet(total ? `${step}/${total}` : '⟳', '#f59e0b')
 }
-function badgeReverting() {
-  badgeSet('↩', '#7c5b00')
-}
 function badgeSuccess() {
   badgeSet('✓', '#0f9e6e')
   setTimeout(() => chrome.action.setBadgeText({ text: '' }), 3000)
@@ -50,9 +34,6 @@ function badgeSuccess() {
 function badgeError() {
   badgeSet('✗', '#d63b3b')
   setTimeout(() => chrome.action.setBadgeText({ text: '' }), 5000)
-}
-function badgeClear() {
-  chrome.action.setBadgeText({ text: '' })
 }
 
 // ── Notification helper ────────────────────────────────────────────────────
@@ -100,7 +81,7 @@ function buildGetUrl(url, action, secretKey, sheetId, sheetName) {
 }
 
 // Races a fetch against a timer. Resolves { timedOut: true } if the timer
-// fires first. Propagates AbortError immediately so cancel still works.
+// fires first. Rejects on network errors.
 function fetchWithTimeout(url, options, ms) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => resolve({ timedOut: true }), ms)
@@ -128,7 +109,7 @@ async function getJiraSessionCookie(jiraBaseUrl) {
   } catch { return null }
 }
 
-// ── GAS POST helper (always fresh fetch — no abort signal) ────────────────
+// ── GAS POST helper ────────────────────────────────────────────────────────
 // Pass timeoutMs > 0 to race the request against a hard deadline.
 function gasPost(url, secretKey, action, extra = {}, timeoutMs = 0) {
   const p = fetch(url, {
@@ -148,49 +129,28 @@ function gasPost(url, secretKey, action, extra = {}, timeoutMs = 0) {
   ])
 }
 
-// ── Revert logic ───────────────────────────────────────────────────────────
-async function doRevert(url, secretKey, sheetId, sheetName) {
-  badgeReverting()
-  tellPopup('SYNC_PROGRESS', { progress: 0, status: 'Reverting sheet to pre-sync state…', phase: 'reverting' })
-
-  const revertData = await gasPost(url, secretKey, 'revertSnapshot',
-    { spreadsheetId: sheetId || undefined, sheetName: sheetName || undefined },
-    REVERT_TIMEOUT_MS)
-
-  if (revertData.success) {
-    const msg = revertData.noSnapshot
-      ? 'Sync cancelled — no changes were made to the sheet.'
-      : 'Sync cancelled — sheet restored to pre-sync state.'
-    await saveState({ running: false, progress: 0, status: '', result: { cancelled: true, reverted: true } })
-    badgeClear()
-    notify('GAS Trigger — Sync Cancelled', msg)
-    tellPopup('SYNC_COMPLETE', { cancelled: true, reverted: true })
-  } else {
-    throw new Error(revertData.error || 'Revert call failed')
-  }
-}
-
 // ── Main sync function ─────────────────────────────────────────────────────
 async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, sheetName }) {
-  cancelRequested     = false
-  snapshotTaken       = false
-  syncAbortController = new AbortController()
-  syncPayload         = { url, secretKey, sheetId, sheetName }
-  const { signal }    = syncAbortController
-
-  // MV3 Heisenbug: without DevTools attached, Chrome lets the service worker
-  // event loop go "idle" while awaiting a long fetch, and stops delivering
-  // network responses to promise callbacks — even though the worker is alive
-  // (setTimeout still fires via a separate wake path). A periodic storage read
-  // keeps the event loop active so GAS fetch responses are delivered promptly.
-  const keepAlive = setInterval(() => chrome.storage.local.get(STATE_KEY), 20_000)
+  // Two-layer keepalive so Chrome delivers fetch responses to promise
+  // callbacks even during long-running GAS operations:
+  //
+  // Layer 1 — setInterval (10s): continuously tickles the V8 event loop via
+  //   a lightweight storage read, preventing Chrome from idling the microtask
+  //   queue (the Heisenbug where fetch responses are silently dropped without
+  //   DevTools attached).
+  //
+  // Layer 2 — chrome.alarms repeating (30s): survives worker kills. If Chrome
+  //   terminates the worker between events, the alarm fires in a fresh instance
+  //   which allows any pending network responses to be requeued and delivered.
+  const keepAlive = setInterval(() => chrome.storage.local.get(STATE_KEY), 10_000)
+  await chrome.alarms.create(KEEPALIVE_ALARM_NAME, { periodInMinutes: 0.5 })
 
   badgeRunning()
 
   try {
     // ── Step 1: read dates from GAS ───────────────────────────────────────
     await broadcastProgress(0, 'Reading dates from sheet…')
-    const datesRes  = await fetch(buildGetUrl(url, 'getDates', secretKey, sheetId, sheetName), { signal })
+    const datesRes  = await fetch(buildGetUrl(url, 'getDates', secretKey, sheetId, sheetName))
     const datesData = await parseResponse(datesRes)
 
     if (datesData?.error === 'Unauthorized' || datesData?.code === 401) {
@@ -212,14 +172,12 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
     const perDate      = []
 
     for (let di = 0; di < rawDates.length; di++) {
-      if (cancelRequested) throw Object.assign(new DOMException('Cancelled', 'AbortError'), { cancelled: true })
-
       const rawDate  = rawDates[di]
       const jiraDate = toJiraDate(rawDate)
       if (!jiraDate) { perDate.push({ date: rawDate, skipped: true }); continue }
 
       await broadcastProgress(
-        10 + Math.round((di / rawDates.length) * 50),
+        10 + Math.round((di / rawDates.length) * 55),
         `[${di + 1}/${rawDates.length}] Fetching JIRA for ${jiraDate}…`,
         { dates: rawDates, cookieFound: !!jsessionId, dateStep: di + 1, dateTotal: rawDates.length }
       )
@@ -229,13 +187,11 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
 
       let allIssues = [], startAt = 0, total = null
       while (true) {
-        if (cancelRequested) throw Object.assign(new DOMException('Cancelled', 'AbortError'), { cancelled: true })
-
         const jiraUrl = `${jiraBaseUrl}/rest/api/3/search?jql=${jql}&fields=summary,status,duedate&maxResults=${JIRA_MAX}&startAt=${startAt}`
         // credentials:'include' is not needed — the Cookie header is set
         // manually above. Including it triggers strict CORS credentialed-
         // request mode, which Jira's CORS policy rejects for extension origins.
-        const jiraRes = await fetch(jiraUrl, { headers: jiraHeaders, signal })
+        const jiraRes = await fetch(jiraUrl, { headers: jiraHeaders })
 
         if (!jiraRes.ok) {
           throw Object.assign(new Error(`JIRA ${jiraRes.status} for ${jiraDate}`), { code: jiraRes.status })
@@ -257,21 +213,13 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
       perDate.push({ date: rawDate, jiraDate, issues: allIssues.length })
     }
 
-    // ── Step 3: snapshot (before any sheet mutations) ─────────────────────
-    await broadcastProgress(62, 'Taking sheet snapshot…')
-    const snapData = await fetch(buildGetUrl(url, 'takeSnapshot', secretKey, sheetId, sheetName), { signal }).then(parseResponse)
-    if (snapData.success) snapshotTaken = true
-
-    // Final cancel gate — after snapshot, before write
-    if (cancelRequested) throw Object.assign(new DOMException('Cancelled', 'AbortError'), { cancelled: true })
-
-    // ── Step 4: write to GAS ──────────────────────────────────────────────
+    // ── Step 3: write to GAS ──────────────────────────────────────────────
     await broadcastProgress(65, 'Writing to Google Sheet…')
 
-    // Set a persistent alarm as a fallback in case Chrome kills this service
-    // worker before fetchWithTimeout's setTimeout can fire. The alarm survives
-    // worker restarts; the handler above recovers the stale running state.
-    // Cleared in the finally block below whether the write succeeds or not.
+    // One-shot alarm at 6 min (GAS execution ceiling) as last-resort recovery:
+    // if the worker is killed before fetchWithTimeout's setTimeout fires, the
+    // alarm fires in a fresh instance which reads the stale running state and
+    // fires success signals. Cleared in the finally block below.
     await chrome.alarms.create(WRITE_ALARM_NAME, { delayInMinutes: 6 })
 
     let gasData
@@ -279,17 +227,20 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
       const gasResOrTimeout = await fetchWithTimeout(url, {
         method:  'POST',
         headers: { 'Content-Type': 'text/plain' },
-        body:    JSON.stringify({ action: 'syncJira', issuesByDate, key: secretKey || undefined, spreadsheetId: sheetId || undefined, sheetName: sheetName || undefined }),
-        signal,
+        body:    JSON.stringify({
+          action:        'syncJira',
+          issuesByDate,
+          key:           secretKey  || undefined,
+          spreadsheetId: sheetId   || undefined,
+          sheetName:     sheetName || undefined,
+        }),
       }, WRITE_TIMEOUT_MS)
 
       if (gasResOrTimeout.timedOut) {
-        // 5-min setTimeout fired before GAS responded — data is written but
-        // the HTTP response never arrived. Treat as success.
+        // 5-min timer fired — data is written but HTTP response never arrived.
         gasData = { success: true, stats: {}, timedOut: true }
       } else {
-        // Headers arrived; read the body with a 30-second guard in case the
-        // response stream stalls after headers (extremely rare for GAS).
+        // Headers arrived; read body with a 30s guard against a stalled stream.
         const parsed = await Promise.race([
           parseResponse(gasResOrTimeout),
           new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), 30_000)),
@@ -297,8 +248,6 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
         if (parsed.timedOut) {
           gasData = { success: true, stats: {}, timedOut: true }
         } else {
-          // Cancel check after write — handles cancel arriving mid-request
-          if (cancelRequested) throw Object.assign(new DOMException('Cancelled', 'AbortError'), { cancelled: true })
           if (!parsed.success) {
             throw Object.assign(new Error(parsed.error || 'Sync failed'), { code: parsed.code })
           }
@@ -306,19 +255,10 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
         }
       }
     } finally {
-      // Always clear the alarm — if we reach here the write is done (success,
-      // error, or cancel). If the worker was killed, this finally never runs
-      // and the alarm fires naturally to recover the state.
+      // Always clear the write alarm when the write resolves normally.
+      // If the worker was killed, this finally never runs and the alarm fires.
       chrome.alarms.clear(WRITE_ALARM_NAME)
     }
-
-    // ── Step 5: delete snapshot (sync succeeded) ──────────────────────────
-    await broadcastProgress(90, 'Cleaning up…')
-    // Fire-and-forget — cleanup is non-critical and GAS may still be slow
-    // to respond after a large write. The next sync's takeSnapshot removes
-    // any leftover _snapshot tab if this request doesn't reach GAS.
-    gasPost(url, secretKey, 'deleteSnapshot',
-      { spreadsheetId: sheetId || undefined, sheetName: sheetName || undefined }, 60_000).catch(() => {})
 
     // ── Success ───────────────────────────────────────────────────────────
     const st      = gasData.stats || {}
@@ -338,66 +278,45 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
     chrome.storage.sync.set({ gas_trigger_preferences: { ...prefs, lastUsed: new Date().toISOString() } })
 
   } catch (err) {
-    const isCancelled = err.cancelled || err.name === 'AbortError'
-
-    if (isCancelled) {
-      if (snapshotTaken) {
-        // Snapshot exists → sheet may have been partially or fully written → revert
-        try {
-          await doRevert(url, secretKey, sheetId, sheetName)
-        } catch (revertErr) {
-          await saveState({ running: false, progress: 0, status: '', result: { cancelled: true, revertFailed: true, error: revertErr.message } })
-          badgeError()
-          notify('GAS Trigger — Revert Failed ✗', 'The _snapshot tab in your sheet was preserved for manual recovery.')
-          tellPopup('SYNC_COMPLETE', { cancelled: true, revertFailed: true, error: revertErr.message })
-        }
-      } else {
-        // Cancel happened before the snapshot — no sheet changes were made
-        await saveState({ running: false, progress: 0, status: '', result: { cancelled: true, reverted: false } })
-        badgeClear()
-        notify('GAS Trigger — Sync Cancelled', 'No changes were made to the sheet.')
-        tellPopup('SYNC_COMPLETE', { cancelled: true, reverted: false })
-      }
-    } else {
-      // Sync error (not a cancel)
-      const result = { success: false, error: err.message || 'Unknown error', code: err.code }
-      await saveState({ running: false, progress: 0, status: '', result })
-      badgeError()
-      notify('GAS Trigger — Sync Failed ✗', err.message || 'Unknown error')
-      tellPopup('SYNC_COMPLETE', { success: false, error: err.message, code: err.code })
-    }
+    const result = { success: false, error: err.message || 'Unknown error', code: err.code }
+    await saveState({ running: false, progress: 0, status: '', result })
+    badgeError()
+    notify('GAS Trigger — Sync Failed ✗', err.message || 'Unknown error')
+    tellPopup('SYNC_COMPLETE', { success: false, error: err.message, code: err.code })
   } finally {
     clearInterval(keepAlive)
-    syncAbortController = null
-    syncPayload         = null
+    chrome.alarms.clear(KEEPALIVE_ALARM_NAME)
   }
 }
 
-// ── Write-timeout alarm ────────────────────────────────────────────────────
-// The MV3 service worker can be killed while waiting for the GAS write response,
-// cancelling any pending setTimeout. chrome.alarms survive worker restarts.
-// This alarm is set for 6 min (GAS execution ceiling) before each write and
-// cleared immediately when the write completes normally. If the worker is killed
-// mid-write, the alarm fires in a fresh worker instance and recovers the state.
+// ── Alarm handlers ─────────────────────────────────────────────────────────
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name !== WRITE_ALARM_NAME) return
 
-  const state = await loadState()
-  if (!state?.running) return  // write already completed via the normal path
+  if (alarm.name === KEEPALIVE_ALARM_NAME) {
+    // Fires every 30s during a sync. No action needed — waking the worker
+    // is enough to allow Chrome to deliver pending fetch responses.
+    return
+  }
 
-  const stored = await chrome.storage.sync.get(['gas_trigger_preferences'])
-  const prefs  = stored.gas_trigger_preferences || {}
+  if (alarm.name === WRITE_ALARM_NAME) {
+    // The worker was killed during the GAS write before the 5-min setTimeout
+    // could fire. GAS has had 6 min (its execution ceiling) to finish.
+    // Recover the stale running state as a success.
+    const state = await loadState()
+    if (!state?.running) return  // write already completed via the normal path
 
-  const result = { success: true, stats: {}, message: 'Sync complete — sheet written (worker was restarted, data was saved)' }
-  await saveState({ running: false, progress: 100, status: '', result })
-  badgeSuccess()
-  notify('GAS Trigger — Sync Complete ✓', 'sheet written (worker was restarted, data was saved)')
-  tellPopup('SYNC_COMPLETE', { success: true, result })
+    const stored = await chrome.storage.sync.get(['gas_trigger_preferences'])
+    const prefs  = stored.gas_trigger_preferences || {}
 
-  if (prefs.url) {
-    gasPost(prefs.url, prefs.secretKey || '', 'deleteSnapshot',
-      { spreadsheetId: prefs.sheetId || undefined, sheetName: prefs.sheetName || undefined }, 60_000).catch(() => {})
-    chrome.storage.sync.set({ gas_trigger_preferences: { ...prefs, lastUsed: new Date().toISOString() } })
+    const result = { success: true, stats: {}, message: 'Sync complete — sheet written (connection was lost, data was saved)' }
+    await saveState({ running: false, progress: 100, status: '', result })
+    badgeSuccess()
+    notify('GAS Trigger — Sync Complete ✓', 'sheet written (connection was lost, data was saved)')
+    tellPopup('SYNC_COMPLETE', { success: true, result })
+
+    if (prefs.url) {
+      chrome.storage.sync.set({ gas_trigger_preferences: { ...prefs, lastUsed: new Date().toISOString() } })
+    }
   }
 })
 
@@ -405,56 +324,17 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   switch (message.type) {
     case 'START_SYNC': {
-      if (syncAbortController) {
-        sendResponse({ ok: false, reason: 'already_running' })
-        return false
-      }
-      startSync(message.payload).catch(console.error)
-      sendResponse({ ok: true })
-      return false
-    }
-
-    case 'CANCEL_SYNC': {
-      cancelRequested = true
-      if (syncAbortController) {
-        // Sync is active in this worker — abort the live fetch.
-        // The catch block inside startSync will handle doRevert if needed.
-        syncAbortController.abort()
-        sendResponse({ ok: true })
-        return false
-      }
-      // syncAbortController is null: either no sync is running, or the worker
-      // was restarted mid-sync (MV3 can kill the worker between async ops),
-      // resetting all in-memory state. Check persisted state and revert directly.
-      ;(async () => {
-        const state = await loadState()
-        if (!state?.running) {
-          sendResponse({ ok: true })
+      // Use persisted state (not an in-memory flag) to guard against double-
+      // start after a worker restart — in-memory state resets on every kill.
+      loadState().then((state) => {
+        if (state?.running) {
+          sendResponse({ ok: false, reason: 'already_running' })
           return
         }
-        // Worker was restarted mid-sync — retrieve prefs and attempt revert.
-        // GAS's revertSnapshot handles the no-snapshot case (returns noSnapshot:true),
-        // so it is safe to call regardless of whether a snapshot was taken.
-        const stored = await chrome.storage.sync.get(['gas_trigger_preferences'])
-        const prefs  = stored.gas_trigger_preferences || {}
-        if (!prefs.url) {
-          await saveState({ running: false, progress: 0, status: '', result: { cancelled: true, reverted: false } })
-          badgeClear()
-          tellPopup('SYNC_COMPLETE', { cancelled: true, reverted: false })
-          sendResponse({ ok: true })
-          return
-        }
-        try {
-          await doRevert(prefs.url, prefs.secretKey || '', prefs.sheetId || '', prefs.sheetName || '')
-        } catch (revertErr) {
-          await saveState({ running: false, progress: 0, status: '', result: { cancelled: true, revertFailed: true, error: revertErr.message } })
-          badgeError()
-          notify('GAS Trigger — Revert Failed ✗', 'The _snapshot tab in your sheet was preserved for manual recovery.')
-          tellPopup('SYNC_COMPLETE', { cancelled: true, revertFailed: true, error: revertErr.message })
-        }
+        startSync(message.payload).catch(console.error)
         sendResponse({ ok: true })
-      })()
-      return true  // keep the message channel open for the async sendResponse
+      })
+      return true  // async sendResponse
     }
 
     case 'GET_SYNC_STATE': {
