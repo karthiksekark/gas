@@ -5,14 +5,15 @@
 // ============================================================
 
 const SECRET_KEY        = 'your-secret-key-here'
-const COLUMNS           = ['Ticket Number', 'Title', 'Status', 'Due Date', 'Deploy Paths', 'Comments']
+const COLUMNS           = ['Ticket Number', 'Title', 'Status', 'Due Date', 'Content Release Paths', 'Launches', 'Comments']
 const TICKET_IDX        = 0
 const TITLE_IDX         = 1
 const STATUS_IDX        = 2
 const DUEDATE_IDX       = 3
-const DEPLOYPATHS_IDX   = 4
-const COMMENTS_IDX      = 5
-const JIRA_COL_COUNT    = 6   // A–F
+const CRPATHS_IDX       = 4
+const LAUNCHES_IDX      = 5
+const COMMENTS_IDX      = 6
+const JIRA_COL_COUNT    = 7   // A–G
 
 // Date row styling
 const DATE_ROW_BG    = '#fff9c4'   // yellow — cols A–E on date rows
@@ -214,7 +215,23 @@ function countRealInBlock(sheet, triggerRow) {
   return n
 }
 
-// Write HYPERLINK formula in col A, setValue for B–E (skip Comments — user managed)
+// ── Path splitting ──
+// Splits a newline-delimited string of paths into two groups:
+//   crp     — paths that do NOT contain /launches/  → Content Release Paths col
+//   launches — paths that DO contain /launches/     → Launches col
+function splitPaths(raw) {
+  var paths = String(raw || '').split('\n')
+    .map(function(p) { return p.trim() })
+    .filter(function(p) { return p !== '' })
+  var crp = [], launches = []
+  paths.forEach(function(p) {
+    if (p.indexOf('/launches/') !== -1) launches.push(p)
+    else crp.push(p)
+  })
+  return { crp: crp.join('\n'), launches: launches.join('\n') }
+}
+
+// Write HYPERLINK formula in col A, setValue for B–G (skip Comments — user managed)
 function writeTicketFormula(sheet, row, ticketKey) {
   if (!ticketKey) return
   sheet.getRange(row, TICKET_IDX+1)
@@ -237,19 +254,21 @@ function applyStatusColor(sheet, row, status) {
 
 function writeJiraRow(sheet, row, vals) {
   writeTicketFormula(sheet, row, String(vals[TICKET_IDX]||'').trim())
-  sheet.getRange(row, TITLE_IDX+1)       .setValue(String(vals[TITLE_IDX]       ||''))
-  sheet.getRange(row, STATUS_IDX+1)      .setValue(String(vals[STATUS_IDX]      ||''))
-  sheet.getRange(row, DUEDATE_IDX+1)     .setValue(String(vals[DUEDATE_IDX]     ||''))
-  sheet.getRange(row, DEPLOYPATHS_IDX+1) .setValue(String(vals[DEPLOYPATHS_IDX] ||''))
+  sheet.getRange(row, TITLE_IDX+1)    .setValue(String(vals[TITLE_IDX]    ||''))
+  sheet.getRange(row, STATUS_IDX+1)   .setValue(String(vals[STATUS_IDX]   ||''))
+  sheet.getRange(row, DUEDATE_IDX+1)  .setValue(String(vals[DUEDATE_IDX]  ||''))
+  sheet.getRange(row, CRPATHS_IDX+1)  .setValue(String(vals[CRPATHS_IDX]  ||''))
+  sheet.getRange(row, LAUNCHES_IDX+1) .setValue(String(vals[LAUNCHES_IDX] ||''))
   clearRowStyle(sheet, row)
   applyStatusColor(sheet, row, vals[STATUS_IDX])
 }
 
 function updateJiraFields(sheet, row, vals) {
-  sheet.getRange(row, TITLE_IDX+1)       .setValue(String(vals[TITLE_IDX]       ||''))
-  sheet.getRange(row, STATUS_IDX+1)      .setValue(String(vals[STATUS_IDX]      ||''))
-  sheet.getRange(row, DUEDATE_IDX+1)     .setValue(String(vals[DUEDATE_IDX]     ||''))
-  sheet.getRange(row, DEPLOYPATHS_IDX+1) .setValue(String(vals[DEPLOYPATHS_IDX] ||''))
+  sheet.getRange(row, TITLE_IDX+1)    .setValue(String(vals[TITLE_IDX]    ||''))
+  sheet.getRange(row, STATUS_IDX+1)   .setValue(String(vals[STATUS_IDX]   ||''))
+  sheet.getRange(row, DUEDATE_IDX+1)  .setValue(String(vals[DUEDATE_IDX]  ||''))
+  sheet.getRange(row, CRPATHS_IDX+1)  .setValue(String(vals[CRPATHS_IDX]  ||''))
+  sheet.getRange(row, LAUNCHES_IDX+1) .setValue(String(vals[LAUNCHES_IDX] ||''))
   clearRowStyle(sheet, row)
   applyStatusColor(sheet, row, vals[STATUS_IDX])
 }
@@ -389,7 +408,8 @@ function createRow(data) {
     var colA=lr?sheet.getRange(1,1,lr,1).getValues():[]
     var allDates=getAllDates(sheet)
     if (!allDates.length) return respond({success:false,error:'No date cells in column A',code:403})
-    var vals=[data['Ticket Number']||'',data['Title']||'',data['Status']||'active',parseDate(data['Due Date'])||data['Due Date']||'',data['Deploy Paths']||'','']
+    var csp = splitPaths(data['Content Release Paths'] || '')
+    var vals=[data['Ticket Number']||'',data['Title']||'',data['Status']||'active',parseDate(data['Due Date'])||data['Due Date']||'',csp.crp,csp.launches,'']
     var inserted=[]
     // Bottom-up
     var triggers=[]
@@ -429,11 +449,15 @@ function updateRow(ticket, data) {
     for (var i=0;i<all.length;i++) if(String(all[i][TICKET_IDX]).trim()===String(ticket).trim()){row=i+1;break}
     if (row===-1) return respond({success:false,error:'Not found: '+ticket,code:404})
     var ex=sheet.getRange(row,1,1,JIRA_COL_COUNT).getValues()[0]
+    var sp = data['Content Release Paths'] !== undefined
+      ? splitPaths(data['Content Release Paths'])
+      : { crp: ex[CRPATHS_IDX], launches: ex[LAUNCHES_IDX] }
     var nv=[ex[TICKET_IDX],
-      data['Title']        !==undefined?data['Title']        :ex[TITLE_IDX],
-      data['Status']       !==undefined?data['Status']       :ex[STATUS_IDX],
-      data['Due Date']     !==undefined?(parseDate(data['Due Date'])||data['Due Date']):ex[DUEDATE_IDX],
-      data['Deploy Paths'] !==undefined?data['Deploy Paths'] :ex[DEPLOYPATHS_IDX],
+      data['Title']    !==undefined?data['Title']    :ex[TITLE_IDX],
+      data['Status']   !==undefined?data['Status']   :ex[STATUS_IDX],
+      data['Due Date'] !==undefined?(parseDate(data['Due Date'])||data['Due Date']):ex[DUEDATE_IDX],
+      sp.crp,
+      sp.launches,
       ex[COMMENTS_IDX]]
     updateJiraFields(sheet,row,nv)
     return ok({message:'Updated',ticket:ticket})
@@ -485,31 +509,32 @@ function syncJira(issuesByDate) {
       if (!Array.isArray(issues)) continue
       for (var ii=0;ii<issues.length;ii++) {
         var iss=issues[ii]
-        var ticket      =String(iss['Ticket Number']||'').trim()
-        var title       =String(iss['Title']        ||'').trim()
-        var status      =String(iss['Status']       ||'unknown').trim()
-        var rawDue      =String(iss['Due Date']     ||'').trim()
-        var deployPaths =String(iss['Deploy Paths'] ||'').trim()
-        var normDue=parseDate(rawDue)||rawDue
+        var ticket  =String(iss['Ticket Number']           ||'').trim()
+        var title   =String(iss['Title']                   ||'').trim()
+        var status  =String(iss['Status']                  ||'unknown').trim()
+        var rawDue  =String(iss['Due Date']                ||'').trim()
+        var sp      =splitPaths(iss['Content Release Paths']||'')
+        var normDue =parseDate(rawDue)||rawDue
         if (!ticket) continue
         var ex=globalMap[ticket]
         if (!ex) {
           if (!insertBatch[dateKey]) insertBatch[dateKey]=[]
-          insertBatch[dateKey].push([ticket,title,status,normDue,deployPaths,''])
+          insertBatch[dateKey].push([ticket,title,status,normDue,sp.crp,sp.launches,''])
           continue
         }
         if (ex.blockDate!==dateKey) {
-          moveBatch.push({ticket:ticket,newVals:[ticket,title,status,normDue,deployPaths,''],
+          moveBatch.push({ticket:ticket,newVals:[ticket,title,status,normDue,sp.crp,sp.launches,''],
             sourceRowNum:ex.rowNum,sourceTrigger:ex.triggerRow,
             sourceDate:ex.blockDate,destDate:dateKey,fullRow:ex.fullRow})
           continue
         }
         var xv=ex.jiraVals
         var normEx=parseDate(xv[DUEDATE_IDX])||String(xv[DUEDATE_IDX]||'').trim()
-        if (String(xv[TITLE_IDX]      ||'').trim()!==title||
-            String(xv[STATUS_IDX]     ||'').trim()!==status||normEx!==normDue||
-            String(xv[DEPLOYPATHS_IDX]||'').trim()!==deployPaths)
-          updateBatch.push({rowNum:ex.rowNum,newVals:[ticket,title,status,normDue,deployPaths,xv[COMMENTS_IDX]||''],
+        if (String(xv[TITLE_IDX]    ||'').trim()!==title||
+            String(xv[STATUS_IDX]   ||'').trim()!==status||normEx!==normDue||
+            String(xv[CRPATHS_IDX]  ||'').trim()!==sp.crp||
+            String(xv[LAUNCHES_IDX] ||'').trim()!==sp.launches)
+          updateBatch.push({rowNum:ex.rowNum,newVals:[ticket,title,status,normDue,sp.crp,sp.launches,xv[COMMENTS_IDX]||''],
                             triggerRow:ex.triggerRow})
       }
     }
