@@ -3,7 +3,6 @@
 // State is persisted to chrome.storage.local so the popup can hydrate
 // after being closed and reopened mid-sync.
 
-const JIRA_TZ              = 'America/New_York'
 const JIRA_MAX             = 50
 // TODO: replace with the real Jira custom field ID (e.g. customfield_10042)
 const JIRA_DEPLOY_PATHS_FIELD = 'customfield_DEPLOY_PATHS'
@@ -59,18 +58,17 @@ async function broadcastProgress(progress, status, extra = {}) {
   }
 }
 
-// ── EST date conversion (no moment in the worker) ─────────────────────────
+// ── Date conversion: M/D/YYYY → YYYY-MM-DD ────────────────────────────────
+// Pure string reformat — no Date object or timezone involved.
+// The sheet date IS the intended Jira due-date; converting through a local
+// Date and re-formatting in America/New_York caused off-by-one errors for
+// users in timezones ≥ UTC+9 (noon local < 04:00 UTC = still May 17 in NYC).
 function toJiraDate(rawDate) {
   const m = rawDate.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
   if (!m) return null
   const [, mo, dy, yr] = m
-  const d = new Date(`${yr}-${mo.padStart(2, '0')}-${dy.padStart(2, '0')}T12:00:00`)
-  if (isNaN(d)) return null
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: JIRA_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(d)
-  const p = Object.fromEntries(parts.filter((x) => x.type !== 'literal').map((x) => [x.type, x.value]))
-  return `${p.year}-${p.month}-${p.day}`
+  if (+mo < 1 || +mo > 12 || +dy < 1 || +dy > 31 || +yr < 2000) return null
+  return `${yr}-${mo.padStart(2, '0')}-${dy.padStart(2, '0')}`
 }
 
 // ── HTTP helpers ───────────────────────────────────────────────────────────
