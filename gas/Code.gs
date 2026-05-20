@@ -291,20 +291,23 @@ function finaliseDate(sheet, triggerRow) {
         sheet.getRange(s, 1, e - s + 1, lc)
              .setBackground(null).setFontColor(null).setFontWeight('normal')
       }
-      // Insert ONE empty separator after block — skip if already empty
+      // Insert ONE empty separator after block — skip if row e is already empty.
+      // blockBounds sets e to the row just before the next date row, so when a
+      // separator exists it IS row e (empty). Checking e+1 was wrong: the next
+      // date row is never empty, causing a duplicate separator on every move.
       if (e >= s) {
-        var sepRow = e + 1
-        var lrNow  = sheet.getLastRow()
-        if (sepRow <= lrNow) {
-          var sepVal = String(sheet.getRange(sepRow, 1).getValue()).trim()
-          var sepIsDate = parseDate(sheet.getRange(sepRow, 1).getValue()) !== null
-          // Only insert if next row is NOT already empty
-          if (sepVal !== '' || sepIsDate) {
+        var eVal = String(sheet.getRange(e, 1).getValue()).trim()
+        if (eVal !== '') {
+          // Last row of the block is a data row — no separator yet, insert one.
+          var sepRow = e + 1
+          var lrNow  = sheet.getLastRow()
+          if (sepRow <= lrNow) {
             sheet.insertRowsAfter(e, 1)
             sheet.getRange(sepRow, 1, 1, Math.max(sheet.getLastColumn(), JIRA_COL_COUNT))
                  .setBackground(null).setFontColor(null).setFontWeight('normal')
           }
         }
+        // else: row e is already empty → separator exists, nothing to do.
       }
     }
   } else {
