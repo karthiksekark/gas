@@ -326,6 +326,13 @@ function finaliseDate(sheet, triggerRow) {
         var lc = Math.max(sheet.getLastColumn(), JIRA_COL_COUNT)
         sheet.getRange(s, 1, e - s + 1, lc)
              .setBackground(null).setFontColor(null).setFontWeight('normal')
+        // Re-apply status colors row by row after the bulk style reset.
+        // finaliseDate runs after all writes, so without this the bulk clear
+        // wipes the colors that writeJiraRow/updateJiraFields just set.
+        var statusCol = sheet.getRange(s, STATUS_IDX + 1, e - s + 1, 1).getValues()
+        for (var si = 0; si < statusCol.length; si++) {
+          applyStatusColor(sheet, s + si, statusCol[si][0])
+        }
       }
       // Insert ONE empty separator after block — skip if row e is already empty.
       // blockBounds sets e to the row just before the next date row, so when a
