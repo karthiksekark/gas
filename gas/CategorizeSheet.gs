@@ -22,14 +22,17 @@ var CAT_CRPATHS_IDX    = 4   // col E — Content Release Paths
 var CAT_JIRA_COL_COUNT = 7   // A–G (checkbox lives in col H = CAT_JIRA_COL_COUNT + 1)
 
 // ── Predefined path categories ─────────────────────────────
-// Each entry: { name: 'Display Label', prefix: '/path/prefix' }
-// A content release path is assigned to the FIRST entry whose prefix
-// it starts with (case-sensitive). Paths that match none go to
-// "Uncategorized". Replace the placeholder entries with your real ones.
+// Each entry: { name, prefix, extras }
+//   name   — group heading shown in the modal
+//   prefix — a path is assigned to the FIRST entry whose prefix it starts with
+//   extras — additional paths appended after the matched paths when the
+//            category has at least one match (omit or leave [] if none needed)
+// Paths that match no entry go to "Uncategorized".
+// Replace the placeholder entries with your real ones.
 var CAT_PATH_CATEGORIES = [
-  { name: 'My App',        prefix: '/content/releases/my-app' },
-  { name: 'Another App',   prefix: '/content/releases/another-app' },
-  { name: 'Launches',      prefix: '/launches/' },
+  { name: 'My App',      prefix: '/content/releases/my-app',      extras: ['/extra/path/for-my-app'] },
+  { name: 'Another App', prefix: '/content/releases/another-app', extras: [] },
+  { name: 'Launches',    prefix: '/launches/',                     extras: ['/extra/launch/path-a', '/extra/launch/path-b'] },
 ]
 
 // ── Custom menu ────────────────────────────────────────────
@@ -137,6 +140,16 @@ function catShowModal(sheet, triggerRow, blockDate, tz) {
     if (!matched) {
       if (!groups['__uncategorized__']) groups['__uncategorized__'] = []
       groups['__uncategorized__'].push(p)
+    }
+  })
+
+  // Append per-category extras after matched paths (only when the group has a match).
+  CAT_PATH_CATEGORIES.forEach(function(cat) {
+    if (groups[cat.name] && cat.extras && cat.extras.length) {
+      cat.extras.forEach(function(ep) {
+        var p = ep.trim()
+        if (p) groups[cat.name].push(p)
+      })
     }
   })
 
