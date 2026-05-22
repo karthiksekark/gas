@@ -71,7 +71,13 @@ function onCategorizeEdit(e) {
   }
   if (!blockDate) return
 
+  // Notify user the script is running (visible before the modal opens)
+  e.source.toast('Loading paths for ' + blockDate + '…', 'Running script', 10)
+
   catShowModal(sheet, blockTriggerRow, blockDate, tz)
+
+  // showModalDialog blocks until the user closes it — this toast appears after
+  e.source.toast('Script completed', 'Categorize', 4)
 }
 
 // ── Modal ──────────────────────────────────────────────────
