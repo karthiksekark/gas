@@ -130,14 +130,19 @@ function styleHeader(sheet, row) {
        .setFontColor(HDR_FG)
        .setFontWeight('bold')
        .setHorizontalAlignment('left')
-  // Categorize checkbox — col H, styled to blend with the header bar.
-  // Checking it fires onCategorizeEdit which shows the modal for this block.
+  // Categorize checkbox (col H) + label (col I), styled to match the header bar.
   sheet.getRange(row, JIRA_COL_COUNT + 1)
        .insertCheckboxes()
        .setValue(false)
        .setBackground(HDR_BG)
        .setFontColor(HDR_FG)
        .setNote('Check to open the Categorize view for this block')
+  sheet.getRange(row, JIRA_COL_COUNT + 2)
+       .setValue('Categorize Release Paths')
+       .setBackground(HDR_BG)
+       .setFontColor(HDR_FG)
+       .setFontWeight('bold')
+       .setHorizontalAlignment('left')
 }
 
 // Clear data row formatting (no background, default text)
