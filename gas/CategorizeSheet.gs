@@ -21,6 +21,17 @@
 var CAT_CRPATHS_IDX    = 4   // col E — Content Release Paths
 var CAT_JIRA_COL_COUNT = 7   // A–G (checkbox lives in col H = CAT_JIRA_COL_COUNT + 1)
 
+// ── Predefined path categories ─────────────────────────────
+// Each entry: { name: 'Display Label', prefix: '/path/prefix' }
+// A content release path is assigned to the FIRST entry whose prefix
+// it starts with (case-sensitive). Paths that match none go to
+// "Uncategorized". Replace the placeholder entries with your real ones.
+var CAT_PATH_CATEGORIES = [
+  { name: 'My App',        prefix: '/content/releases/my-app' },
+  { name: 'Another App',   prefix: '/content/releases/another-app' },
+  { name: 'Launches',      prefix: '/launches/' },
+]
+
 // ── Custom menu ────────────────────────────────────────────
 // Simple trigger — runs automatically on every sheet open.
 // No installation needed for this function itself.
@@ -81,8 +92,9 @@ function onCategorizeEdit(e) {
 }
 
 // ── Modal ──────────────────────────────────────────────────
-// Reads all Content Release Paths in the block, groups by 4th
-// path segment, and displays a read-only modal dialog.
+// Reads all Content Release Paths in the block, matches each against
+// CAT_PATH_CATEGORIES (prefix match, first match wins), then shows
+// a read-only modal with one section per matched category + Uncategorized.
 function catShowModal(sheet, triggerRow, blockDate, tz) {
   var lr = sheet.getLastRow()
   var s  = triggerRow + 2   // first data row (skips date row + header row)
@@ -108,19 +120,30 @@ function catShowModal(sheet, triggerRow, blockDate, tz) {
     }
   }
 
-  // Group by the 4th path segment.
-  // e.g. /content/releases/2026/my-launch/article → group key: my-launch
-  // Paths with fewer than 4 segments → Uncategorized.
-  var groups     = {}
-  var namedOrder = []
+  // Match each path against CAT_PATH_CATEGORIES (first matching prefix wins).
+  // Unmatched paths land in __uncategorized__.
+  var groups = {}   // key → [path, …]
   allPaths.forEach(function(p) {
-    var segs = p.split('/').filter(function(seg) { return seg !== '' })
-    var key  = segs.length >= 4 ? segs[3] : null
-    var gk   = key || '__uncategorized__'
-    if (!groups[gk]) { groups[gk] = []; if (key) namedOrder.push(gk) }
-    groups[gk].push(p)
+    var matched = false
+    for (var ci = 0; ci < CAT_PATH_CATEGORIES.length; ci++) {
+      if (p.indexOf(CAT_PATH_CATEGORIES[ci].prefix) === 0) {
+        var key = CAT_PATH_CATEGORIES[ci].name
+        if (!groups[key]) groups[key] = []
+        groups[key].push(p)
+        matched = true
+        break
+      }
+    }
+    if (!matched) {
+      if (!groups['__uncategorized__']) groups['__uncategorized__'] = []
+      groups['__uncategorized__'].push(p)
+    }
   })
-  namedOrder.sort()
+
+  // Preserve the order defined in CAT_PATH_CATEGORIES; skip empty categories.
+  var namedOrder = CAT_PATH_CATEGORIES
+    .map(function(c) { return c.name })
+    .filter(function(name) { return !!groups[name] })
 
   var html = catBuildHtml(blockDate, groups, namedOrder)
   SpreadsheetApp.getUi().showModalDialog(
@@ -147,9 +170,9 @@ function catBuildHtml(blockDate, groups, namedOrder) {
   if (!hasContent) {
     h += '<p class="empty">No Content Release Paths found for this block.</p>'
   } else {
-    namedOrder.forEach(function(key) {
-      h += '<div class="group"><div class="gh">' + catEsc(key) + '</div>'
-      groups[key].forEach(function(p) { h += '<div class="path">' + catEsc(p) + '</div>' })
+    namedOrder.forEach(function(name) {
+      h += '<div class="group"><div class="gh">' + catEsc(name) + '</div>'
+      groups[name].forEach(function(p) { h += '<div class="path">' + catEsc(p) + '</div>' })
       h += '</div>'
     })
     if (groups['__uncategorized__']) {

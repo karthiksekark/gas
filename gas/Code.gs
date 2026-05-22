@@ -339,9 +339,10 @@ function finaliseDate(sheet, triggerRow) {
         var lc = Math.max(sheet.getLastColumn(), JIRA_COL_COUNT)
         sheet.getRange(s, 1, e - s + 1, lc)
              .setBackground(null).setFontColor(null).setFontWeight('normal')
-        // Remove any checkbox validation that col H may have inherited from
-        // the header row — the checkbox must only appear in the header row.
-        sheet.getRange(s, JIRA_COL_COUNT + 1, e - s + 1, 1).clearDataValidations()
+        // Remove checkbox validation AND value from col H data rows — the
+        // checkbox is header-only; without clearContent the cell shows "False".
+        sheet.getRange(s, JIRA_COL_COUNT + 1, e - s + 1, 1)
+             .clearDataValidations().clearContent()
         // Re-apply status colors row by row after the bulk style reset.
         // finaliseDate runs after all writes, so without this the bulk clear
         // wipes the colors that writeJiraRow/updateJiraFields just set.
