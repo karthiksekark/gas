@@ -161,12 +161,21 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
     }
 
     const rawDates = datesData.dates
-    await broadcastProgress(10, 'Dates loaded — reading JSESSIONID…', { dates: rawDates })
+    await broadcastProgress(10, 'Dates loaded — checking Jira session…', { dates: rawDates })
 
     // ── Step 2: fetch JIRA per date ───────────────────────────────────────
-    const jsessionId  = await getJiraSessionCookie(jiraBaseUrl)
-    const jiraHeaders = { Accept: 'application/json' }
-    if (jsessionId) jiraHeaders['Cookie'] = `JSESSIONID=${jsessionId}`
+    const jsessionId = await getJiraSessionCookie(jiraBaseUrl)
+
+    // Pre-check: surface a clear message before touching Jira rather than
+    // letting the first fetch fail silently or return a cryptic 401.
+    if (!jsessionId) {
+      throw Object.assign(
+        new Error('No Jira session found. Please log in to Jira in Chrome and sync again.'),
+        { code: 401 }
+      )
+    }
+
+    const jiraHeaders = { Accept: 'application/json', Cookie: `JSESSIONID=${jsessionId}` }
 
     const issuesByDate = {}
     const perDate      = []
@@ -194,7 +203,11 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
         const jiraRes = await fetch(jiraUrl, { headers: jiraHeaders })
 
         if (!jiraRes.ok) {
-          throw Object.assign(new Error(`JIRA ${jiraRes.status} for ${jiraDate}`), { code: jiraRes.status })
+          const msg =
+            jiraRes.status === 401 ? 'Jira session expired. Please log in to Jira in Chrome and sync again.' :
+            jiraRes.status === 403 ? 'Access denied by Jira. Your account may not have permission to view this project.' :
+            `Jira returned ${jiraRes.status} for ${jiraDate}.`
+          throw Object.assign(new Error(msg), { code: jiraRes.status })
         }
 
         const jiraData = await jiraRes.json()

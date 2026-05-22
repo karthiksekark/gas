@@ -122,7 +122,7 @@ function styleDateRow(sheet, row, count) {
   // Col E — empty, already styled above
 }
 
-// Header row: blue bg, white bold text
+// Header row: blue bg, white bold text + Categorize checkbox in col H
 function styleHeader(sheet, row) {
   sheet.getRange(row, 1, 1, JIRA_COL_COUNT)
        .setValues([COLUMNS])
@@ -130,6 +130,14 @@ function styleHeader(sheet, row) {
        .setFontColor(HDR_FG)
        .setFontWeight('bold')
        .setHorizontalAlignment('left')
+  // Categorize checkbox — col H, styled to blend with the header bar.
+  // Checking it fires onCategorizeEdit which shows the modal for this block.
+  sheet.getRange(row, JIRA_COL_COUNT + 1)
+       .insertCheckboxes()
+       .setValue(false)
+       .setBackground(HDR_BG)
+       .setFontColor(HDR_FG)
+       .setNote('Check to open the Categorize view for this block')
 }
 
 // Clear data row formatting (no background, default text)
@@ -727,6 +735,143 @@ function deleteSnapshot() {
     if (snap) ss.deleteSheet(snap)
     return ok({ message: 'Snapshot deleted' })
   } catch(e) { return srvErr(e.message) }
+}
+
+// ── Categorize button ─────────────────────────────────────────────────────
+//
+//  styleHeader() inserts a checkbox in col H of every header row.
+//  Checking the box fires onCategorizeEdit (installable onEdit trigger) which
+//  identifies the block by scanning upward for the nearest date in col A,
+//  collects all Content Release Paths in the block, groups them by their 4th
+//  path segment, and shows a read-only modal dialog.
+//
+//  One-time setup: open the spreadsheet, then run setupCategorizeTrigger()
+//  from the Apps Script editor (Run → Run function).
+
+// Installable onEdit trigger — detects the checkbox being checked.
+function onCategorizeEdit(e) {
+  if (!e || !e.range) return
+  var range = e.range
+  // Only act on col H checkboxes transitioning to TRUE
+  if (range.getColumn() !== JIRA_COL_COUNT + 1) return
+  if (String(e.value) !== 'TRUE') return
+
+  // Seed the timezone cache so parseDate() works correctly in trigger context
+  _sheetTz = e.source.getSpreadsheetTimeZone()
+
+  // Reset the checkbox immediately so it behaves like a button
+  range.setValue(false)
+
+  var sheet     = range.getSheet()
+  var headerRow = range.getRow()
+
+  // The date row sits directly above the header row; scan upward to confirm
+  var blockDate       = null
+  var blockTriggerRow = null
+  for (var r = headerRow - 1; r >= 1; r--) {
+    var d = parseDate(sheet.getRange(r, 1).getValue())
+    if (d) { blockDate = d; blockTriggerRow = r; break }
+  }
+  if (!blockDate) return
+
+  showCategorizeModal(sheet, blockTriggerRow, blockDate)
+}
+
+// Reads the block's Content Release Paths, groups them, shows the modal.
+function showCategorizeModal(sheet, triggerRow, blockDate) {
+  var lr = sheet.getLastRow()
+  var s  = triggerRow + 2   // first data row (date row + header row above)
+  var e  = lr
+
+  if (s <= lr) {
+    var cA = sheet.getRange(s, 1, lr - s + 1, 1).getValues()
+    for (var i = 0; i < cA.length; i++) {
+      if (parseDate(cA[i][0]) !== null) { e = s + i - 1; break }
+    }
+  }
+
+  // Collect every individual path from the Content Release Paths column
+  var allPaths = []
+  if (s <= e) {
+    var pathVals = sheet.getRange(s, CRPATHS_IDX + 1, e - s + 1, 1).getValues()
+    for (var pi = 0; pi < pathVals.length; pi++) {
+      var cell = String(pathVals[pi][0] || '').trim()
+      if (!cell) continue
+      cell.split('\n').forEach(function(p) {
+        p = p.trim()
+        if (p) allPaths.push(p)
+      })
+    }
+  }
+
+  // Group by the 4th path segment (index 3 after splitting on '/' and
+  // filtering the leading empty string from the leading slash).
+  // Paths with fewer than 4 segments go into Uncategorized.
+  var groups     = {}
+  var namedOrder = []
+  allPaths.forEach(function(p) {
+    var segs = p.split('/').filter(function(seg) { return seg !== '' })
+    var key  = segs.length >= 4 ? segs[3] : null
+    var gk   = key || '__uncategorized__'
+    if (!groups[gk]) { groups[gk] = []; if (key) namedOrder.push(gk) }
+    groups[gk].push(p)
+  })
+  namedOrder.sort()
+
+  var html = buildCategorizeHtml(blockDate, groups, namedOrder)
+  SpreadsheetApp.getUi().showModalDialog(
+    HtmlService.createHtmlOutput(html).setWidth(540).setHeight(460),
+    'Categorize — ' + blockDate
+  )
+}
+
+function buildCategorizeHtml(blockDate, groups, namedOrder) {
+  var h = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
+  h += 'body{font-family:Arial,sans-serif;font-size:13px;margin:0;padding:16px 20px;color:#333;overflow-y:auto;}'
+  h += 'h2{font-size:15px;color:#1a1a2e;margin:0 0 16px;padding-bottom:8px;border-bottom:2px solid #4f6ef7;}'
+  h += '.group{margin-bottom:16px;}'
+  h += '.gh{font-weight:bold;color:#4f6ef7;margin-bottom:5px;font-size:13px;text-transform:uppercase;letter-spacing:.5px;}'
+  h += '.gh.unc{color:#bbb;}'
+  h += '.path{font-family:monospace;font-size:11px;color:#555;padding:3px 4px 3px 10px;'
+  h += 'border-left:3px solid #e0e7ff;margin:2px 0;word-break:break-all;line-height:1.5;}'
+  h += '.empty{color:#aaa;font-style:italic;}'
+  h += '</style></head><body>'
+  h += '<h2>' + escHtml(blockDate) + '</h2>'
+
+  var hasContent = namedOrder.length > 0 || groups['__uncategorized__']
+  if (!hasContent) {
+    h += '<p class="empty">No Content Release Paths found for this block.</p>'
+  } else {
+    namedOrder.forEach(function(key) {
+      h += '<div class="group"><div class="gh">' + escHtml(key) + '</div>'
+      groups[key].forEach(function(p) { h += '<div class="path">' + escHtml(p) + '</div>' })
+      h += '</div>'
+    })
+    if (groups['__uncategorized__']) {
+      h += '<div class="group"><div class="gh unc">Uncategorized</div>'
+      groups['__uncategorized__'].forEach(function(p) { h += '<div class="path">' + escHtml(p) + '</div>' })
+      h += '</div>'
+    }
+  }
+  h += '</body></html>'
+  return h
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+}
+
+// Run this once from the Apps Script editor (Run → setupCategorizeTrigger)
+// to install the onEdit trigger that powers the Categorize checkbox.
+// Re-running it is safe — it removes the old trigger first.
+function setupCategorizeTrigger() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet()
+  if (!ss) throw new Error('Open the target spreadsheet first, then run this function.')
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'onCategorizeEdit') ScriptApp.deleteTrigger(t)
+  })
+  ScriptApp.newTrigger('onCategorizeEdit').forSpreadsheet(ss).onEdit().create()
+  SpreadsheetApp.getUi().alert('Categorize trigger installed. The checkbox in each block header is now active.')
 }
 
 // ── Entry points ──
