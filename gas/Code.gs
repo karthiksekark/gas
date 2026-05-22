@@ -737,6 +737,16 @@ function deleteSnapshot() {
   } catch(e) { return srvErr(e.message) }
 }
 
+// ── Custom menu ───────────────────────────────────────────────────────────
+// Runs automatically every time the spreadsheet is opened (simple trigger).
+// Adds the GAS Trigger menu to the toolbar — no manual setup required.
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('GAS Trigger')
+    .addItem('Set Up Categorize Button', 'setupCategorizeTrigger')
+    .addToUi()
+}
+
 // ── Categorize button ─────────────────────────────────────────────────────
 //
 //  styleHeader() inserts a checkbox in col H of every header row.
@@ -861,9 +871,9 @@ function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
 }
 
-// Run this once from the Apps Script editor (Run → setupCategorizeTrigger)
-// to install the onEdit trigger that powers the Categorize checkbox.
-// Re-running it is safe — it removes the old trigger first.
+// Called from the GAS Trigger menu → Set Up Categorize Button.
+// Installs the onEdit trigger that powers the Categorize checkbox.
+// Re-running is safe — removes the old trigger first.
 function setupCategorizeTrigger() {
   var ss = SpreadsheetApp.getActiveSpreadsheet()
   if (!ss) throw new Error('Open the target spreadsheet first, then run this function.')
