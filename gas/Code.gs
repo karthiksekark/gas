@@ -247,6 +247,8 @@ function applyStatusColor(sheet, row, status) {
     cell.setBackground('#d1e7dd').setFontColor('#0a3622')
   } else if (s === 'in progress') {
     cell.setBackground('#fff3cd').setFontColor('#664d03')
+  } else if (s === 'cancelled' || s === 'canceled') {
+    cell.setBackground('#e0e0e0').setFontColor('#616161')
   } else {
     cell.setBackground(null).setFontColor(null)
   }
@@ -546,6 +548,23 @@ function syncJira(issuesByDate) {
       }
     }
 
+    // Compute stale keys — ticket keys that exist in the sheet but were not
+    // returned by any date's Jira query this sync (cancelled, due date changed
+    // to a date not in the sheet, etc.).  Returned to the worker so it can
+    // call Jira individually and apply targeted reconciliation.
+    var touchedKeys = {}
+    for (var dtk in issuesByDate) {
+      if (!Array.isArray(issuesByDate[dtk])) continue
+      issuesByDate[dtk].forEach(function(iss) {
+        var tk = String(iss['Ticket Number'] || '').trim()
+        if (tk) touchedKeys[tk] = true
+      })
+    }
+    var staleKeys = []
+    for (var sk in globalMap) {
+      if (!touchedKeys[sk]) staleKeys.push({ key: sk, blockDate: globalMap[sk].blockDate })
+    }
+
     var affDates={}, totalU=0, totalM=0, totalI=0
 
     // 3a: updates
@@ -635,8 +654,68 @@ function syncJira(issuesByDate) {
     totalSkip=Math.max(0,totalSkip-totalU-totalM-totalI)
 
     return ok({message:'Sync complete',
-      stats:{updated:totalU,moved:totalM,inserted:totalI,skipped:totalSkip}})
+      stats:{updated:totalU,moved:totalM,inserted:totalI,skipped:totalSkip},
+      staleKeys:staleKeys})
   } catch(e){return srvErr(e.message)}
+}
+
+// ── Reconciliation — post-sync stale ticket cleanup ───────────────────────
+// Called by the worker after it has individually queried Jira for each stale
+// ticket (one that existed in the sheet but wasn't returned by any date query).
+//
+//  cancelled   — [{key, blockDate, newStatus}]
+//    → Status cell updated to newStatus and coloured grey.
+//
+//  rescheduled — [{key, blockDate, newDueDate}]
+//    → Due Date cell updated to newDueDate, flagged amber, note added.
+//      The row stays in the old block; the amber flag tells the user the
+//      new date is not yet in the sheet.
+function applyReconciliation(cancelled, rescheduled) {
+  try {
+    var sheet   = getSheet()
+    var lastRow = sheet.getLastRow()
+    var nCancelled = 0, nRescheduled = 0
+
+    if (!lastRow) return ok({ stats: { cancelled: 0, rescheduled: 0 } })
+
+    // Build ticket key → sheet row index from col A.
+    // getValues() returns the computed display value of HYPERLINK formulas,
+    // so ticket keys are read back correctly.
+    var colAVals = sheet.getRange(1, 1, lastRow, 1).getValues()
+    var keyToRow = {}
+    for (var i = 0; i < colAVals.length; i++) {
+      var val = String(colAVals[i][0] || '').trim()
+      if (!val) continue
+      if (parseDate(val) !== null) continue
+      if (val.toLowerCase() === COLUMNS[TICKET_IDX].toLowerCase()) continue
+      keyToRow[val] = i + 1
+    }
+
+    if (Array.isArray(cancelled)) {
+      cancelled.forEach(function(item) {
+        var row = keyToRow[item.key]
+        if (!row) return
+        sheet.getRange(row, STATUS_IDX + 1).setValue(item.newStatus || 'Cancelled')
+        applyStatusColor(sheet, row, item.newStatus || 'Cancelled')
+        nCancelled++
+      })
+    }
+
+    if (Array.isArray(rescheduled)) {
+      rescheduled.forEach(function(item) {
+        var row = keyToRow[item.key]
+        if (!row) return
+        sheet.getRange(row, DUEDATE_IDX + 1)
+             .setValue(item.newDueDate)
+             .setBackground('#ffe0b2')
+             .setFontColor('#e65100')
+             .setNote('Due date changed in Jira — new date not in sheet')
+        nRescheduled++
+      })
+    }
+
+    return ok({ stats: { cancelled: nCancelled, rescheduled: nRescheduled } })
+  } catch(e) { return srvErr(e.message) }
 }
 
 // ── Snapshot helpers ──────────────────────────────────────────────────────
@@ -753,8 +832,9 @@ function doPost(e) {
     case 'create':         return createRow(body.data)
     case 'update':         return updateRow(body.id, body.data || {})
     case 'delete':         return deleteRow(body.id)
-    case 'syncJira':       return syncJira(body.issuesByDate)
-    case 'revertSnapshot': return revertSnapshot()
+    case 'syncJira':            return syncJira(body.issuesByDate)
+    case 'applyReconciliation': return applyReconciliation(body.cancelled, body.rescheduled)
+    case 'revertSnapshot':      return revertSnapshot()
     case 'deleteSnapshot': return deleteSnapshot()
     default:               return badReq('Unknown action')
   }
