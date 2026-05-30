@@ -130,19 +130,6 @@ function styleHeader(sheet, row) {
        .setFontColor(HDR_FG)
        .setFontWeight('bold')
        .setHorizontalAlignment('left')
-  // Categorize checkbox (col H) + label (col I), styled to match the header bar.
-  sheet.getRange(row, JIRA_COL_COUNT + 1)
-       .insertCheckboxes()
-       .setValue(false)
-       .setBackground(HDR_BG)
-       .setFontColor(HDR_FG)
-       .setNote('Check to open the Categorize view for this block')
-  sheet.getRange(row, JIRA_COL_COUNT + 2)
-       .setValue('Categorize Release Paths')
-       .setBackground(HDR_BG)
-       .setFontColor(HDR_FG)
-       .setFontWeight('bold')
-       .setHorizontalAlignment('left')
 }
 
 // Clear data row formatting (no background, default text)
@@ -339,10 +326,6 @@ function finaliseDate(sheet, triggerRow) {
         var lc = Math.max(sheet.getLastColumn(), JIRA_COL_COUNT)
         sheet.getRange(s, 1, e - s + 1, lc)
              .setBackground(null).setFontColor(null).setFontWeight('normal')
-        // Remove checkbox validation AND value from col H data rows — the
-        // checkbox is header-only; without clearContent the cell shows "False".
-        sheet.getRange(s, JIRA_COL_COUNT + 1, e - s + 1, 1)
-             .clearDataValidations().clearContent()
         // Re-apply status colors row by row after the bulk style reset.
         // finaliseDate runs after all writes, so without this the bulk clear
         // wipes the colors that writeJiraRow/updateJiraFields just set.
