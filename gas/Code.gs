@@ -273,7 +273,7 @@ function writeJiraRow(sheet, row, vals) {
   writeTicketFormula(sheet, row, String(vals[TICKET_IDX]||'').trim())
   sheet.getRange(row, TITLE_IDX+1)    .setValue(String(vals[TITLE_IDX]    ||''))
   sheet.getRange(row, STATUS_IDX+1)   .setValue(String(vals[STATUS_IDX]   ||''))
-  sheet.getRange(row, DUEDATE_IDX+1)  .setValue(String(vals[DUEDATE_IDX]  ||''))
+  sheet.getRange(row, DUEDATE_IDX+1)  .setValue(String(vals[DUEDATE_IDX]  ||'')).setNote('')
   sheet.getRange(row, CRPATHS_IDX+1)  .setValue(String(vals[CRPATHS_IDX]  ||''))
   sheet.getRange(row, LAUNCHES_IDX+1) .setValue(String(vals[LAUNCHES_IDX] ||''))
   clearRowStyle(sheet, row)
@@ -287,7 +287,7 @@ function writeJiraRow(sheet, row, vals) {
 function updateJiraFields(sheet, row, vals) {
   sheet.getRange(row, TITLE_IDX+1)    .setValue(String(vals[TITLE_IDX]    ||''))
   sheet.getRange(row, STATUS_IDX+1)   .setValue(String(vals[STATUS_IDX]   ||''))
-  sheet.getRange(row, DUEDATE_IDX+1)  .setValue(String(vals[DUEDATE_IDX]  ||''))
+  sheet.getRange(row, DUEDATE_IDX+1)  .setValue(String(vals[DUEDATE_IDX]  ||'')).setNote('')
   sheet.getRange(row, CRPATHS_IDX+1)  .setValue(String(vals[CRPATHS_IDX]  ||''))
   sheet.getRange(row, LAUNCHES_IDX+1) .setValue(String(vals[LAUNCHES_IDX] ||''))
   clearRowStyle(sheet, row)
