@@ -240,7 +240,7 @@ function writeTicketFormula(sheet, row, ticketKey) {
 
 function isCancelled(status) {
   var s = String(status || '').trim().toLowerCase()
-  return s === 'cancelled' || s === 'canceled'
+  return s === 'cancelled' || s === 'canceled' || s === 'on hold'
 }
 
 function applyStatusColor(sheet, row, status) {
@@ -252,7 +252,7 @@ function applyStatusColor(sheet, row, status) {
     cell.setBackground('#d1e7dd').setFontColor('#0a3622')
   } else if (s === 'in progress') {
     cell.setBackground('#fff3cd').setFontColor('#664d03')
-  } else if (s === 'cancelled' || s === 'canceled') {
+  } else if (s === 'cancelled' || s === 'canceled' || s === 'on hold') {
     cell.setBackground('#bdbdbd').setFontColor('#424242')
   } else {
     cell.setBackground(null).setFontColor(null)
