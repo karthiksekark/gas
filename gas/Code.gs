@@ -238,6 +238,11 @@ function writeTicketFormula(sheet, row, ticketKey) {
        .setFormula('=HYPERLINK("'+JIRA_BASE_URL+'/browse/'+ticketKey+'","'+ticketKey+'")')
 }
 
+function isCancelled(status) {
+  var s = String(status || '').trim().toLowerCase()
+  return s === 'cancelled' || s === 'canceled'
+}
+
 function applyStatusColor(sheet, row, status) {
   var cell = sheet.getRange(row, STATUS_IDX + 1)
   var s = String(status || '').trim().toLowerCase()
@@ -248,10 +253,20 @@ function applyStatusColor(sheet, row, status) {
   } else if (s === 'in progress') {
     cell.setBackground('#fff3cd').setFontColor('#664d03')
   } else if (s === 'cancelled' || s === 'canceled') {
-    cell.setBackground('#e0e0e0').setFontColor('#616161')
+    cell.setBackground('#bdbdbd').setFontColor('#424242')
   } else {
     cell.setBackground(null).setFontColor(null)
   }
+}
+
+// Applies the full cancelled treatment: grey background across A–G,
+// dark text, and clears Content Release Paths + Launches.
+function applyCancelledRow(sheet, row) {
+  sheet.getRange(row, 1, 1, JIRA_COL_COUNT)
+       .setBackground('#bdbdbd')
+       .setFontColor('#424242')
+  sheet.getRange(row, CRPATHS_IDX  + 1).clearContent()
+  sheet.getRange(row, LAUNCHES_IDX + 1).clearContent()
 }
 
 function writeJiraRow(sheet, row, vals) {
@@ -262,7 +277,11 @@ function writeJiraRow(sheet, row, vals) {
   sheet.getRange(row, CRPATHS_IDX+1)  .setValue(String(vals[CRPATHS_IDX]  ||''))
   sheet.getRange(row, LAUNCHES_IDX+1) .setValue(String(vals[LAUNCHES_IDX] ||''))
   clearRowStyle(sheet, row)
-  applyStatusColor(sheet, row, vals[STATUS_IDX])
+  if (isCancelled(vals[STATUS_IDX])) {
+    applyCancelledRow(sheet, row)
+  } else {
+    applyStatusColor(sheet, row, vals[STATUS_IDX])
+  }
 }
 
 function updateJiraFields(sheet, row, vals) {
@@ -272,7 +291,11 @@ function updateJiraFields(sheet, row, vals) {
   sheet.getRange(row, CRPATHS_IDX+1)  .setValue(String(vals[CRPATHS_IDX]  ||''))
   sheet.getRange(row, LAUNCHES_IDX+1) .setValue(String(vals[LAUNCHES_IDX] ||''))
   clearRowStyle(sheet, row)
-  applyStatusColor(sheet, row, vals[STATUS_IDX])
+  if (isCancelled(vals[STATUS_IDX])) {
+    applyCancelledRow(sheet, row)
+  } else {
+    applyStatusColor(sheet, row, vals[STATUS_IDX])
+  }
 }
 
 function restoreUserCols(sheet, destRow, fullRow) {
@@ -328,12 +351,18 @@ function finaliseDate(sheet, triggerRow) {
         var lc = Math.max(sheet.getLastColumn(), JIRA_COL_COUNT)
         sheet.getRange(s, 1, e - s + 1, lc)
              .setBackground(null).setFontColor(null).setFontWeight('normal')
-        // Re-apply status colors row by row after the bulk style reset.
+        // Re-apply status styling row by row after the bulk style reset.
         // finaliseDate runs after all writes, so without this the bulk clear
         // wipes the colors that writeJiraRow/updateJiraFields just set.
+        // Cancelled rows get full-row grey + paths cleared; others get
+        // status-cell colour only.
         var statusCol = sheet.getRange(s, STATUS_IDX + 1, e - s + 1, 1).getValues()
         for (var si = 0; si < statusCol.length; si++) {
-          applyStatusColor(sheet, s + si, statusCol[si][0])
+          if (isCancelled(statusCol[si][0])) {
+            applyCancelledRow(sheet, s + si)
+          } else {
+            applyStatusColor(sheet, s + si, statusCol[si][0])
+          }
         }
       }
       // Insert ONE empty separator after block — skip if row e is already empty.
@@ -696,7 +725,7 @@ function applyReconciliation(cancelled, rescheduled) {
         var row = keyToRow[item.key]
         if (!row) return
         sheet.getRange(row, STATUS_IDX + 1).setValue(item.newStatus || 'Cancelled')
-        applyStatusColor(sheet, row, item.newStatus || 'Cancelled')
+        applyCancelledRow(sheet, row)
         nCancelled++
       })
     }
