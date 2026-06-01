@@ -294,7 +294,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
     //   • Cancelled  → update Status + grey style
     //   • Due date changed to a date not in the sheet → amber-flag Due Date cell
     // Reconciliation errors are non-fatal — the main sync already succeeded.
-    let reconciledCancelled = 0, reconciledRescheduled = 0
+    let reconciledCancelled = 0, reconciledRescheduled = 0, reconciledWarn = ''
 
     if (!gasData.timedOut) {
       const staleKeys = gasData.staleKeys || []
@@ -319,7 +319,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
 
             if (/^cancell?ed$/i.test(statusName.trim())) {
               cancelled.push({ key: stale.key, blockDate: stale.blockDate, newStatus: statusName })
-            } else if (newRawDate && newRawDate !== stale.blockDate) {
+            } else if (newRawDate && newRawDate !== stale.blockDate && !rawDatesSet.has(newRawDate)) {
               rescheduled.push({ key: stale.key, blockDate: stale.blockDate, newDueDate: newRawDate })
             }
           } catch (_) { /* network error for this ticket — skip */ }
@@ -337,8 +337,15 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
             if (reconRes.success) {
               reconciledCancelled   = reconRes.stats?.cancelled   || 0
               reconciledRescheduled = reconRes.stats?.rescheduled || 0
+            } else {
+              reconciledWarn = reconRes.error || 'Reconciliation failed'
             }
-          } catch (_) { /* reconciliation failure is non-fatal */ }
+          } catch (reconErr) {
+            reconciledWarn = reconErr.message || 'Reconciliation request failed'
+          }
+          if (reconciledWarn) {
+            await broadcastProgress(85, `Reconciliation warning: ${reconciledWarn}`)
+          }
         }
       }
     }
@@ -348,9 +355,10 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
     const reconcilePart = (reconciledCancelled || reconciledRescheduled)
       ? `, ${reconciledCancelled} cancelled, ${reconciledRescheduled} rescheduled`
       : ''
+    const reconcileWarnPart = reconciledWarn ? ` (reconciliation warning: ${reconciledWarn})` : ''
     const summary = gasData.timedOut
       ? 'sheet written — response timed out (data was saved)'
-      : `${st.inserted || 0} inserted, ${st.updated || 0} updated, ${st.moved || 0} moved, ${st.skipped || 0} skipped${reconcilePart}`
+      : `${st.inserted || 0} inserted, ${st.updated || 0} updated, ${st.moved || 0} moved, ${st.skipped || 0} skipped${reconcilePart}${reconcileWarnPart}`
     const result  = { success: true, stats: { ...st, perDate }, message: `Sync complete — ${summary}` }
 
     await saveState({ running: false, progress: 100, status: '', result })
