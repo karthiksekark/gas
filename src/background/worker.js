@@ -317,7 +317,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
             const statusName = data.fields?.status?.name || ''
             const newRawDate = fromJiraDate(data.fields?.duedate || '')
 
-            if (/^cancell?ed$/i.test(statusName.trim())) {
+            if (/^cancell?ed$/i.test(statusName.trim()) || /^on hold$/i.test(statusName.trim())) {
               cancelled.push({ key: stale.key, blockDate: stale.blockDate, newStatus: statusName })
             } else if (newRawDate && newRawDate !== stale.blockDate && !rawDatesSet.has(newRawDate)) {
               rescheduled.push({ key: stale.key, blockDate: stale.blockDate, newDueDate: newRawDate })
