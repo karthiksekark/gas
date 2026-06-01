@@ -58,8 +58,8 @@ async function broadcastProgress(progress, status, extra = {}) {
   }
 }
 
-// ── Date conversion: M/D/YYYY → YYYY-MM-DD ────────────────────────────────
-// Pure string reformat — no Date object or timezone involved.
+// ── Date conversions ───────────────────────────────────────────────────────
+// toJiraDate: M/D/YYYY → YYYY-MM-DD (pure string reformat, no timezone)
 // The sheet date IS the intended Jira due-date; converting through a local
 // Date and re-formatting in America/New_York caused off-by-one errors for
 // users in timezones ≥ UTC+9 (noon local < 04:00 UTC = still May 17 in NYC).
@@ -69,6 +69,14 @@ function toJiraDate(rawDate) {
   const [, mo, dy, yr] = m
   if (+mo < 1 || +mo > 12 || +dy < 1 || +dy > 31 || +yr < 2000) return null
   return `${yr}-${mo.padStart(2, '0')}-${dy.padStart(2, '0')}`
+}
+
+// fromJiraDate: YYYY-MM-DD → M/D/YYYY (inverse of toJiraDate, no leading zeros)
+function fromJiraDate(jiraDate) {
+  if (!jiraDate) return null
+  const m = jiraDate.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return null
+  return `${+m[2]}/${+m[3]}/${m[1]}`
 }
 
 // ── HTTP helpers ───────────────────────────────────────────────────────────
@@ -280,11 +288,69 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
       chrome.alarms.clear(WRITE_ALARM_NAME)
     }
 
+    // ── Step 4: stale ticket reconciliation pass ──────────────────────────
+    // For each ticket that existed in the sheet but wasn't returned by any
+    // date's Jira query, call Jira directly to find out why:
+    //   • Cancelled  → update Status + grey style
+    //   • Due date changed to a date not in the sheet → amber-flag Due Date cell
+    // Reconciliation errors are non-fatal — the main sync already succeeded.
+    let reconciledCancelled = 0, reconciledRescheduled = 0
+
+    if (!gasData.timedOut) {
+      const staleKeys = gasData.staleKeys || []
+
+      if (staleKeys.length) {
+        await broadcastProgress(70, `Checking ${staleKeys.length} stale ticket(s) in Jira…`)
+
+        const cancelled   = []
+        const rescheduled = []
+        const rawDatesSet = new Set(rawDates)
+
+        for (const stale of staleKeys) {
+          try {
+            const jiraRes = await fetch(
+              `${jiraBaseUrl}/rest/api/3/issue/${stale.key}?fields=status,duedate`,
+              { headers: jiraHeaders }
+            )
+            if (!jiraRes.ok) continue
+            const data       = await jiraRes.json()
+            const statusName = data.fields?.status?.name || ''
+            const newRawDate = fromJiraDate(data.fields?.duedate || '')
+
+            if (/^cancell?ed$/i.test(statusName.trim())) {
+              cancelled.push({ key: stale.key, blockDate: stale.blockDate, newStatus: statusName })
+            } else if (newRawDate && newRawDate !== stale.blockDate) {
+              rescheduled.push({ key: stale.key, blockDate: stale.blockDate, newDueDate: newRawDate })
+            }
+          } catch (_) { /* network error for this ticket — skip */ }
+        }
+
+        if (cancelled.length || rescheduled.length) {
+          await broadcastProgress(85, 'Applying reconciliation updates…')
+          try {
+            const reconRes = await gasPost(url, secretKey, 'applyReconciliation', {
+              cancelled,
+              rescheduled,
+              spreadsheetId: sheetId   || undefined,
+              sheetName:     sheetName || undefined,
+            }, 60_000)
+            if (reconRes.success) {
+              reconciledCancelled   = reconRes.stats?.cancelled   || 0
+              reconciledRescheduled = reconRes.stats?.rescheduled || 0
+            }
+          } catch (_) { /* reconciliation failure is non-fatal */ }
+        }
+      }
+    }
+
     // ── Success ───────────────────────────────────────────────────────────
     const st      = gasData.stats || {}
+    const reconcilePart = (reconciledCancelled || reconciledRescheduled)
+      ? `, ${reconciledCancelled} cancelled, ${reconciledRescheduled} rescheduled`
+      : ''
     const summary = gasData.timedOut
       ? 'sheet written — response timed out (data was saved)'
-      : `${st.inserted || 0} inserted, ${st.updated || 0} updated, ${st.moved || 0} moved, ${st.skipped || 0} skipped`
+      : `${st.inserted || 0} inserted, ${st.updated || 0} updated, ${st.moved || 0} moved, ${st.skipped || 0} skipped${reconcilePart}`
     const result  = { success: true, stats: { ...st, perDate }, message: `Sync complete — ${summary}` }
 
     await saveState({ running: false, progress: 100, status: '', result })
