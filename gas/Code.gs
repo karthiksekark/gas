@@ -298,6 +298,19 @@ function updateJiraFields(sheet, row, vals) {
   }
 }
 
+// Applies the full rescheduled treatment: light amber-orange across A–G,
+// updates the Due Date cell to newDueDate, adds a note, clears paths.
+function applyRescheduledRow(sheet, row, newDueDate) {
+  sheet.getRange(row, 1, 1, JIRA_COL_COUNT)
+       .setBackground('#ffe0b2')
+       .setFontColor('#e65100')
+  sheet.getRange(row, DUEDATE_IDX + 1)
+       .setValue(newDueDate)
+       .setNote('Due date changed in Jira — new date not in sheet')
+  sheet.getRange(row, CRPATHS_IDX  + 1).clearContent()
+  sheet.getRange(row, LAUNCHES_IDX + 1).clearContent()
+}
+
 function restoreUserCols(sheet, destRow, fullRow) {
   // Only restore Comments (col E) and beyond — never overwrite with empty
   var commentsVal = fullRow[COMMENTS_IDX]
@@ -696,9 +709,9 @@ function syncJira(issuesByDate) {
 //    → Status cell updated to newStatus and coloured grey.
 //
 //  rescheduled — [{key, blockDate, newDueDate}]
-//    → Due Date cell updated to newDueDate, flagged amber, note added.
-//      The row stays in the old block; the amber flag tells the user the
-//      new date is not yet in the sheet.
+//    → Full row flagged amber-orange (#ffe0b2 / #e65100). Due Date updated
+//      to newDueDate with a note. Content Release Paths + Launches cleared.
+//      Row stays in the old block until the user adds the new date to the sheet.
 function applyReconciliation(cancelled, rescheduled) {
   try {
     var sheet   = getSheet()
@@ -734,11 +747,7 @@ function applyReconciliation(cancelled, rescheduled) {
       rescheduled.forEach(function(item) {
         var row = keyToRow[item.key]
         if (!row) return
-        sheet.getRange(row, DUEDATE_IDX + 1)
-             .setValue(item.newDueDate)
-             .setBackground('#ffe0b2')
-             .setFontColor('#e65100')
-             .setNote('Due date changed in Jira — new date not in sheet')
+        applyRescheduledRow(sheet, row, item.newDueDate)
         nRescheduled++
       })
     }
