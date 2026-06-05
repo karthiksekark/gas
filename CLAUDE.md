@@ -12,13 +12,22 @@ npm run generate-icons # regenerate public/icons/ from scripts/generate-icons.js
 
 There are no tests or linters configured. After any change to `src/`, run `npm run build` and verify the `dist/` output before committing.
 
+## One-time configuration
+
+Before the system works end-to-end, two constants need real values:
+
+| File | Constant | What to set |
+|---|---|---|
+| `src/background/worker.js` line 8 | `JIRA_DEPLOY_PATHS_FIELD` | Real Jira custom field ID, e.g. `customfield_10042` |
+| `gas/Code.gs` line 7 | `SECRET_KEY` | Any secret string — must match the extension's Preferences → Secret Key |
+| `gas/Code.gs` line 30 | `JIRA_BASE_URL` | Your Jira instance base URL, e.g. `https://yourorg.atlassian.net` |
+| `gas/CategorizeSheet.gs` line 32 | `CAT_PATH_CATEGORIES` | Replace placeholder entries with real path prefixes |
+
 ## Architecture
 
 This repo has two completely separate codebases that communicate over HTTP:
 
 ### 1. Chrome Extension (`src/`, built by Vite → `dist/`)
-
-A Chrome MV3 extension with:
 
 - **`src/background/worker.js`** — Service worker. Owns the entire sync lifecycle. Receives `START_SYNC` from the popup, fetches all dated blocks from GAS, queries Jira per date via JQL, posts `issuesByDate` to GAS, then runs a post-sync stale-ticket reconciliation pass. Persists running state to `chrome.storage.local` so the popup can hydrate after being closed mid-sync. Two keepalive layers (10s `setInterval` + 30s `chrome.alarms`) prevent Chrome from killing the worker during long GAS writes.
 - **`src/popup/`** — React 18 UI. `App.jsx` is the shell; `SyncPanel.jsx` drives sync and progress display; `Settings.jsx` handles preferences. All Chrome API calls go through `src/hooks/useStorage.js` which falls back to `localStorage` when running outside the extension.
@@ -54,7 +63,7 @@ Row N+2…: Ticket data rows (col A = HYPERLINK formula with ticket key as label
 Row last: Empty separator row
 ```
 
-`isCancelled(status)` matches `"cancelled"`, `"canceled"`, `"on hold"` (case-insensitive) — all three get the same grey full-row treatment.
+`isCancelled(status)` matches `"cancelled"`, `"canceled"`, `"on hold"` (case-insensitive) — all three get identical grey full-row treatment: `#bdbdbd`/`#424242` across A–G, CRP and Launches cleared.
 
 **`gas/CategorizeSheet.gs`** — Bound script pasted directly into each target Google Sheet (not the standalone Web App). Adds a "GAS Trigger" menu → installs an `onEdit` trigger that detects a checkbox in col H of any block header row → opens a modal grouping Content Release Paths by `CAT_PATH_CATEGORIES` prefix matching.
 
@@ -69,11 +78,19 @@ The extension is loaded unpacked from `dist/` in Chrome (chrome://extensions →
 ```
 syncJira returns staleKeys
   └─ worker queries each stale ticket: GET /rest/api/3/issue/{key}?fields=status,duedate
-       ├─ status matches /^cancell?ed$/i or /^on hold$/i → cancelled[]
-       └─ newRawDate ≠ stale.blockDate AND newRawDate not in rawDatesSet → rescheduled[]
+       ├─ /^cancell?ed$/i or /^on hold$/i  → cancelled[]
+       └─ newRawDate ≠ stale.blockDate
+          AND newRawDate not in rawDatesSet → rescheduled[]
+          (tickets with null duedate or new date already in sheet are silently skipped)
   └─ gasPost applyReconciliation({ cancelled, rescheduled })
-       ├─ cancelled → applyCancelledRow (grey + clear CRP/Launches)
-       └─ rescheduled → applyRescheduledRow (orange + update due date + note + clear CRP/Launches)
+       ├─ cancelled    → applyCancelledRow  (grey  + clear CRP/Launches)
+       └─ rescheduled  → applyRescheduledRow (orange + update due date + note + clear CRP/Launches)
 ```
 
-When a rescheduled ticket's target date block is later added to the sheet, the next `syncJira` detects it as a move (globalMap.blockDate ≠ new date) and `writeJiraRow`/`updateJiraFields` clear the note on the due date cell automatically.
+When a rescheduled ticket's target date block is later added to the sheet, the next `syncJira` detects it as a move (`globalMap.blockDate ≠ new date`) and `writeJiraRow`/`updateJiraFields` clear the note on the due date cell automatically.
+
+### Known behavioural invariants
+
+- **CRP/Launches are always empty for cancelled/on-hold rows.** `finaliseDate` calls `applyCancelledRow` (which clears those cells) for every cancelled/on-hold row in the entire sheet on every sync — not only when a row first transitions to that status. Any value manually entered into CRP or Launches on a cancelled/on-hold row will be erased on the next sync.
+- **`writeJiraRow` and `updateJiraFields` always clear the note on the due date cell** (`.setNote('')`). Do not set notes on the due date cell from outside these functions — they will be wiped on the next sync that touches the row.
+- **Stale ticket reconciliation is skipped entirely when `syncJira` times out** (`gasData.timedOut = true`). The sheet write succeeded but stale styling is deferred to the next full sync.
