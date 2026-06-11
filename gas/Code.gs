@@ -23,7 +23,8 @@ const AUTOFIT_IDXS      = [TICKET_IDX, STATUS_IDX, PARENT_IDX, FIXVER_IDX, DUEDA
 
 // Columns with a fixed 300px width and no text wrap
 const FIXED_COL_WIDTH   = 300
-const FIXED_NOWRAP_IDXS = [CRPATHS_IDX, LAUNCHES_IDX, COMMENTS_IDX]
+const FIXED_CLIP_IDXS   = [CRPATHS_IDX, LAUNCHES_IDX]
+const FIXED_NOWRAP_IDXS = [COMMENTS_IDX]
 
 // Date row styling
 const DATE_ROW_BG    = '#fff9c4'   // yellow — cols A–E on date rows
@@ -258,10 +259,14 @@ function writeParentFormula(sheet, row, parentKey) {
 }
 
 // Title column: fixed width + wrap. Ticket/Status/Parent/Fix Version/Due Date: fit content.
-// CRP/Launches/Comments: fixed width, no wrap.
+// CRP/Launches: fixed width, clipped (no overlap into next column). Comments: fixed width, overflow.
 function applyColumnFormatting(sheet) {
   sheet.setColumnWidth(TITLE_IDX + 1, TITLE_COL_WIDTH)
   sheet.getRange(1, TITLE_IDX + 1, sheet.getMaxRows(), 1).setWrap(true)
+  FIXED_CLIP_IDXS.forEach(function(idx) {
+    sheet.setColumnWidth(idx + 1, FIXED_COL_WIDTH)
+    sheet.getRange(1, idx + 1, sheet.getMaxRows(), 1).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP)
+  })
   FIXED_NOWRAP_IDXS.forEach(function(idx) {
     sheet.setColumnWidth(idx + 1, FIXED_COL_WIDTH)
     sheet.getRange(1, idx + 1, sheet.getMaxRows(), 1).setWrap(false)
