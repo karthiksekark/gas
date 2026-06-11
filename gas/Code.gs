@@ -140,6 +140,7 @@ function styleHeader(sheet, row) {
        .setFontColor(HDR_FG)
        .setFontWeight('bold')
        .setHorizontalAlignment('left')
+       .setVerticalAlignment('middle')
 }
 
 // Clear data row formatting (no background, default text)
@@ -149,6 +150,7 @@ function clearRowStyle(sheet, row, numCols) {
        .setFontColor(null)
        .setFontWeight('normal')
        .setHorizontalAlignment('left')
+       .setVerticalAlignment('top')
 }
 
 // ── Sheet scanning ──
