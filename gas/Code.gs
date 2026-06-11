@@ -5,15 +5,21 @@
 // ============================================================
 
 const SECRET_KEY        = 'your-secret-key-here'
-const COLUMNS           = ['Ticket Number', 'Title', 'Status', 'Due Date', 'Content Release Paths', 'Launches', 'Comments']
+const COLUMNS           = ['Ticket Number', 'Title', 'Status', 'Parent Ticket Number', 'Fix Version', 'Due Date', 'Content Release Paths', 'Launches', 'Comments']
 const TICKET_IDX        = 0
 const TITLE_IDX         = 1
 const STATUS_IDX        = 2
-const DUEDATE_IDX       = 3
-const CRPATHS_IDX       = 4
-const LAUNCHES_IDX      = 5
-const COMMENTS_IDX      = 6
-const JIRA_COL_COUNT    = 7   // A–G
+const PARENT_IDX        = 3
+const FIXVER_IDX        = 4
+const DUEDATE_IDX       = 5
+const CRPATHS_IDX       = 6
+const LAUNCHES_IDX      = 7
+const COMMENTS_IDX      = 8
+const JIRA_COL_COUNT    = 9   // A–I
+
+// Title column width + columns that should auto-fit their content
+const TITLE_COL_WIDTH   = 300
+const AUTOFIT_IDXS      = [TICKET_IDX, STATUS_IDX, PARENT_IDX, FIXVER_IDX, DUEDATE_IDX]
 
 // Date row styling
 const DATE_ROW_BG    = '#fff9c4'   // yellow — cols A–E on date rows
@@ -238,6 +244,20 @@ function writeTicketFormula(sheet, row, ticketKey) {
        .setFormula('=HYPERLINK("'+JIRA_BASE_URL+'/browse/'+ticketKey+'","'+ticketKey+'")')
 }
 
+// Write HYPERLINK formula for the parent ticket, or clear the cell if there is none.
+function writeParentFormula(sheet, row, parentKey) {
+  var cell = sheet.getRange(row, PARENT_IDX+1)
+  if (!parentKey) { cell.clearContent(); return }
+  cell.setFormula('=HYPERLINK("'+JIRA_BASE_URL+'/browse/'+parentKey+'","'+parentKey+'")')
+}
+
+// Title column: fixed width + wrap. Ticket/Status/Parent/Fix Version/Due Date: fit content.
+function applyColumnFormatting(sheet) {
+  sheet.setColumnWidth(TITLE_IDX + 1, TITLE_COL_WIDTH)
+  sheet.getRange(1, TITLE_IDX + 1, sheet.getMaxRows(), 1).setWrap(true)
+  AUTOFIT_IDXS.forEach(function(idx) { sheet.autoResizeColumn(idx + 1) })
+}
+
 function isCancelled(status) {
   var s = String(status || '').trim().toLowerCase()
   return s === 'cancelled' || s === 'canceled' || s === 'on hold'
@@ -273,6 +293,8 @@ function writeJiraRow(sheet, row, vals) {
   writeTicketFormula(sheet, row, String(vals[TICKET_IDX]||'').trim())
   sheet.getRange(row, TITLE_IDX+1)    .setValue(String(vals[TITLE_IDX]    ||''))
   sheet.getRange(row, STATUS_IDX+1)   .setValue(String(vals[STATUS_IDX]   ||''))
+  writeParentFormula(sheet, row, String(vals[PARENT_IDX]||'').trim())
+  sheet.getRange(row, FIXVER_IDX+1)   .setValue(String(vals[FIXVER_IDX]   ||''))
   sheet.getRange(row, DUEDATE_IDX+1)  .setValue(String(vals[DUEDATE_IDX]  ||'')).setNote('')
   sheet.getRange(row, CRPATHS_IDX+1)  .setValue(String(vals[CRPATHS_IDX]  ||''))
   sheet.getRange(row, LAUNCHES_IDX+1) .setValue(String(vals[LAUNCHES_IDX] ||''))
@@ -287,6 +309,8 @@ function writeJiraRow(sheet, row, vals) {
 function updateJiraFields(sheet, row, vals) {
   sheet.getRange(row, TITLE_IDX+1)    .setValue(String(vals[TITLE_IDX]    ||''))
   sheet.getRange(row, STATUS_IDX+1)   .setValue(String(vals[STATUS_IDX]   ||''))
+  writeParentFormula(sheet, row, String(vals[PARENT_IDX]||'').trim())
+  sheet.getRange(row, FIXVER_IDX+1)   .setValue(String(vals[FIXVER_IDX]   ||''))
   sheet.getRange(row, DUEDATE_IDX+1)  .setValue(String(vals[DUEDATE_IDX]  ||'')).setNote('')
   sheet.getRange(row, CRPATHS_IDX+1)  .setValue(String(vals[CRPATHS_IDX]  ||''))
   sheet.getRange(row, LAUNCHES_IDX+1) .setValue(String(vals[LAUNCHES_IDX] ||''))
@@ -460,7 +484,7 @@ function createRow(data) {
     var allDates=getAllDates(sheet)
     if (!allDates.length) return respond({success:false,error:'No date cells in column A',code:403})
     var csp = splitPaths(data['Content Release Paths'] || '')
-    var vals=[data['Ticket Number']||'',data['Title']||'',data['Status']||'active',parseDate(data['Due Date'])||data['Due Date']||'',csp.crp,csp.launches,'']
+    var vals=[data['Ticket Number']||'',data['Title']||'',data['Status']||'active',data['Parent Ticket Number']||'',data['Fix Version']||'',parseDate(data['Due Date'])||data['Due Date']||'',csp.crp,csp.launches,'']
     var inserted=[]
     // Bottom-up
     var triggers=[]
@@ -488,6 +512,7 @@ function createRow(data) {
         })()) break
       finaliseDate(sheet,tr)
     })
+    applyColumnFormatting(sheet)
     return ok({action:'created',message:'Inserted at '+inserted.length+' location(s)',insertedAtRows:inserted})
   } catch(e){return srvErr(e.message)}
 }
@@ -506,11 +531,14 @@ function updateRow(ticket, data) {
     var nv=[ex[TICKET_IDX],
       data['Title']    !==undefined?data['Title']    :ex[TITLE_IDX],
       data['Status']   !==undefined?data['Status']   :ex[STATUS_IDX],
+      data['Parent Ticket Number'] !==undefined?data['Parent Ticket Number']:ex[PARENT_IDX],
+      data['Fix Version']          !==undefined?data['Fix Version']         :ex[FIXVER_IDX],
       data['Due Date'] !==undefined?(parseDate(data['Due Date'])||data['Due Date']):ex[DUEDATE_IDX],
       sp.crp,
       sp.launches,
       ex[COMMENTS_IDX]]
     updateJiraFields(sheet,row,nv)
+    applyColumnFormatting(sheet)
     return ok({message:'Updated',ticket:ticket})
   } catch(e){return srvErr(e.message)}
 }
@@ -563,6 +591,8 @@ function syncJira(issuesByDate) {
         var ticket  =String(iss['Ticket Number']           ||'').trim()
         var title   =String(iss['Title']                   ||'').trim()
         var status  =String(iss['Status']                  ||'unknown').trim()
+        var parent  =String(iss['Parent Ticket Number']    ||'').trim()
+        var fixVer  =String(iss['Fix Version']             ||'').trim()
         var rawDue  =String(iss['Due Date']                ||'').trim()
         var sp      =splitPaths(iss['Content Release Paths']||'')
         var normDue =parseDate(rawDue)||rawDue
@@ -570,11 +600,11 @@ function syncJira(issuesByDate) {
         var ex=globalMap[ticket]
         if (!ex) {
           if (!insertBatch[dateKey]) insertBatch[dateKey]=[]
-          insertBatch[dateKey].push([ticket,title,status,normDue,sp.crp,sp.launches,''])
+          insertBatch[dateKey].push([ticket,title,status,parent,fixVer,normDue,sp.crp,sp.launches,''])
           continue
         }
         if (ex.blockDate!==dateKey) {
-          moveBatch.push({ticket:ticket,newVals:[ticket,title,status,normDue,sp.crp,sp.launches,''],
+          moveBatch.push({ticket:ticket,newVals:[ticket,title,status,parent,fixVer,normDue,sp.crp,sp.launches,''],
             sourceRowNum:ex.rowNum,sourceTrigger:ex.triggerRow,
             sourceDate:ex.blockDate,destDate:dateKey,fullRow:ex.fullRow})
           continue
@@ -583,9 +613,11 @@ function syncJira(issuesByDate) {
         var normEx=parseDate(xv[DUEDATE_IDX])||String(xv[DUEDATE_IDX]||'').trim()
         if (String(xv[TITLE_IDX]    ||'').trim()!==title||
             String(xv[STATUS_IDX]   ||'').trim()!==status||normEx!==normDue||
+            String(xv[PARENT_IDX]   ||'').trim()!==parent||
+            String(xv[FIXVER_IDX]   ||'').trim()!==fixVer||
             String(xv[CRPATHS_IDX]  ||'').trim()!==sp.crp||
             String(xv[LAUNCHES_IDX] ||'').trim()!==sp.launches)
-          updateBatch.push({rowNum:ex.rowNum,newVals:[ticket,title,status,normDue,sp.crp,sp.launches,xv[COMMENTS_IDX]||''],
+          updateBatch.push({rowNum:ex.rowNum,newVals:[ticket,title,status,parent,fixVer,normDue,sp.crp,sp.launches,xv[COMMENTS_IDX]||''],
                             triggerRow:ex.triggerRow})
       }
     }
@@ -689,6 +721,8 @@ function syncJira(issuesByDate) {
       toFinalise.sort(function(a,b){return b.row-a.row})
       toFinalise.forEach(function(item){ finaliseDate(sheet, item.row) })
     }
+
+    applyColumnFormatting(sheet)
 
     var totalSkip=0
     for (var dk in issuesByDate)
