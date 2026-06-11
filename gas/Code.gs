@@ -255,7 +255,17 @@ function writeParentFormula(sheet, row, parentKey) {
 function applyColumnFormatting(sheet) {
   sheet.setColumnWidth(TITLE_IDX + 1, TITLE_COL_WIDTH)
   sheet.getRange(1, TITLE_IDX + 1, sheet.getMaxRows(), 1).setWrap(true)
-  AUTOFIT_IDXS.forEach(function(idx) { sheet.autoResizeColumn(idx + 1) })
+  // Flush pending writes first — autoResizeColumn sizes against the sheet's
+  // current rendered state, so without this it can measure stale (pre-write)
+  // content and leave new values/headers clipped.
+  SpreadsheetApp.flush()
+  AUTOFIT_IDXS.forEach(function(idx) {
+    var col = idx + 1
+    sheet.autoResizeColumn(col)
+    // autoResizeColumn fits content tightly with no breathing room, which
+    // visually clips bold header text — pad a little extra.
+    sheet.setColumnWidth(col, sheet.getColumnWidth(col) + 8)
+  })
 }
 
 function isCancelled(status) {
