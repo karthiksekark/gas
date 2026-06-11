@@ -21,6 +21,10 @@ const JIRA_COL_COUNT    = 9   // A–I
 const TITLE_COL_WIDTH   = 300
 const AUTOFIT_IDXS      = [TICKET_IDX, STATUS_IDX, PARENT_IDX, FIXVER_IDX, DUEDATE_IDX]
 
+// Columns with a fixed 300px width and no text wrap
+const FIXED_COL_WIDTH   = 300
+const FIXED_NOWRAP_IDXS = [CRPATHS_IDX, LAUNCHES_IDX, COMMENTS_IDX]
+
 // Date row styling
 const DATE_ROW_BG    = '#fff9c4'   // yellow — cols A–E on date rows
 const DATE_LABEL_COL = 3           // col C — "Total Tickets"
@@ -252,9 +256,14 @@ function writeParentFormula(sheet, row, parentKey) {
 }
 
 // Title column: fixed width + wrap. Ticket/Status/Parent/Fix Version/Due Date: fit content.
+// CRP/Launches/Comments: fixed width, no wrap.
 function applyColumnFormatting(sheet) {
   sheet.setColumnWidth(TITLE_IDX + 1, TITLE_COL_WIDTH)
   sheet.getRange(1, TITLE_IDX + 1, sheet.getMaxRows(), 1).setWrap(true)
+  FIXED_NOWRAP_IDXS.forEach(function(idx) {
+    sheet.setColumnWidth(idx + 1, FIXED_COL_WIDTH)
+    sheet.getRange(1, idx + 1, sheet.getMaxRows(), 1).setWrap(false)
+  })
   // Flush pending writes first — autoResizeColumn sizes against the sheet's
   // current rendered state, so without this it can measure stale (pre-write)
   // content and leave new values/headers clipped.
