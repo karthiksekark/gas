@@ -18,8 +18,8 @@
 // ============================================================
 
 // ── Constants — keep in sync with Code.gs ──────────────────
-var CAT_CRPATHS_IDX    = 4   // col E — Content Release Paths
-var CAT_JIRA_COL_COUNT = 7   // A–G (checkbox lives in col H = CAT_JIRA_COL_COUNT + 1)
+var CAT_CRPATHS_IDX    = 6   // col G — Content Release Paths
+var CAT_JIRA_COL_COUNT = 9   // A–I (checkbox lives in col J = CAT_JIRA_COL_COUNT + 1)
 
 // ── Predefined path categories ─────────────────────────────
 // Each entry: { name, prefix, extras }

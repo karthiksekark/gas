@@ -185,8 +185,8 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
 
     const jiraHeaders = { Accept: 'application/json', Cookie: `JSESSIONID=${jsessionId}` }
 
-    const issuesByDate = {}
-    const perDate      = []
+    const rawIssuesByDate = {}
+    const perDate         = []
 
     for (let di = 0; di < rawDates.length; di++) {
       const rawDate  = rawDates[di]
@@ -194,7 +194,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
       if (!jiraDate) { perDate.push({ date: rawDate, skipped: true }); continue }
 
       await broadcastProgress(
-        10 + Math.round((di / rawDates.length) * 55),
+        10 + Math.round((di / rawDates.length) * 50),
         `[${di + 1}/${rawDates.length}] Fetching JIRA for ${jiraDate}…`,
         { dates: rawDates, cookieFound: !!jsessionId, dateStep: di + 1, dateTotal: rawDates.length }
       )
@@ -204,7 +204,7 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
 
       let allIssues = [], startAt = 0, total = null
       while (true) {
-        const jiraUrl = `${jiraBaseUrl}/rest/api/3/search?jql=${jql}&fields=summary,status,duedate,${JIRA_DEPLOY_PATHS_FIELD}&maxResults=${JIRA_MAX}&startAt=${startAt}`
+        const jiraUrl = `${jiraBaseUrl}/rest/api/3/search?jql=${jql}&fields=summary,status,duedate,parent,fixVersions,${JIRA_DEPLOY_PATHS_FIELD}&maxResults=${JIRA_MAX}&startAt=${startAt}`
         // credentials:'include' is not needed — the Cookie header is set
         // manually above. Including it triggers strict CORS credentialed-
         // request mode, which Jira's CORS policy rejects for extension origins.
@@ -225,20 +225,62 @@ async function startSync({ url, secretKey, jiraBaseUrl, jiraJqlQuery, sheetId, s
         if (startAt >= total || !(jiraData.issues || []).length) break
       }
 
+      rawIssuesByDate[rawDate] = allIssues
+      perDate.push({ date: rawDate, jiraDate, issues: allIssues.length })
+    }
+
+    // ── Step 2b: resolve Fix Version for tickets with a parent ────────────
+    // "Fix Version" shows the ticket's own fix version, unless it has a
+    // parent — in which case it shows the PARENT's fix version. Batch-fetch
+    // fixVersions for every distinct parent key seen across all dates.
+    const parentKeys = new Set()
+    for (const issues of Object.values(rawIssuesByDate)) {
+      for (const issue of issues) {
+        const parentKey = issue.fields?.parent?.key
+        if (parentKey) parentKeys.add(parentKey)
+      }
+    }
+
+    const parentFixVersions = {}
+    if (parentKeys.size) {
+      await broadcastProgress(62, `Resolving fix versions for ${parentKeys.size} parent ticket(s)…`)
+      const keysList = [...parentKeys]
+      const jql = encodeURIComponent(`key in (${keysList.join(',')})`)
+      let startAt = 0, total = null
+      while (true) {
+        const jiraUrl = `${jiraBaseUrl}/rest/api/3/search?jql=${jql}&fields=fixVersions&maxResults=${JIRA_MAX}&startAt=${startAt}`
+        const jiraRes = await fetch(jiraUrl, { headers: jiraHeaders })
+        if (!jiraRes.ok) break // non-fatal — leave unresolved parent fix versions blank
+        const jiraData = await jiraRes.json()
+        if (total === null) total = jiraData.total
+        for (const issue of (jiraData.issues || [])) {
+          parentFixVersions[issue.key] = (issue.fields?.fixVersions || []).map(v => v.name).join(', ')
+        }
+        startAt += (jiraData.issues || []).length
+        if (startAt >= total || !(jiraData.issues || []).length) break
+      }
+    }
+
+    const issuesByDate = {}
+    for (const [rawDate, allIssues] of Object.entries(rawIssuesByDate)) {
       issuesByDate[rawDate] = allIssues.map((issue) => {
         const rawPaths = issue.fields?.[JIRA_DEPLOY_PATHS_FIELD]
         const allPaths = Array.isArray(rawPaths)
           ? rawPaths.join('\n')
           : (rawPaths || '')
+        const parentKey  = issue.fields?.parent?.key || ''
+        const ownFixVer  = (issue.fields?.fixVersions || []).map(v => v.name).join(', ')
+        const fixVersion = parentKey ? (parentFixVersions[parentKey] || '') : ownFixVer
         return {
-          'Ticket Number':        issue.key || '',
-          'Title':                issue.fields?.summary || '',
-          'Status':               issue.fields?.status?.name || 'unknown',
-          'Due Date':             rawDate,
+          'Ticket Number':         issue.key || '',
+          'Title':                 issue.fields?.summary || '',
+          'Status':                issue.fields?.status?.name || 'unknown',
+          'Parent Ticket Number':  parentKey,
+          'Fix Version':           fixVersion,
+          'Due Date':              rawDate,
           'Content Release Paths': allPaths,
         }
       })
-      perDate.push({ date: rawDate, jiraDate, issues: allIssues.length })
     }
 
     // ── Step 3: write to GAS ──────────────────────────────────────────────
