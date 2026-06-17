@@ -32,6 +32,12 @@ const DATE_LABEL_COL = 3           // col C — "Total Tickets"
 const DATE_COUNT_COL = 4           // col D — ticket count
 const DATE_FONT_CLR  = '#b8860b'   // dark amber text on date rows
 
+// Daytime block — tickets whose Title contains "daytime" get split into a
+// second date+header block, placed right after the normal block for that
+// date. Col B of the date row carries the block label ('' = normal block).
+const DAYTIME_LABEL_COL  = 2
+const DAYTIME_LABEL_TEXT = 'Daytime'
+
 // Header row styling
 const HDR_BG         = '#4f6ef7'
 const HDR_FG         = '#ffffff'
@@ -181,6 +187,48 @@ function blockBounds(triggerRow, colAVals, lastRow) {
   for (var r=s;r<=lastRow;r++)
     if (r-1<colAVals.length&&parseDate(colAVals[r-1][0])!==null){e=r-1;break}
   return {start:s, end:e}
+}
+
+// ── Daytime block helpers ──
+
+function isDaytimeTitle(title) { return /daytime/i.test(String(title || '')) }
+function blockLabelFor(title)  { return isDaytimeTitle(title) ? DAYTIME_LABEL_TEXT : '' }
+function blockKeyOf(date, label) { return date + '|' + (label || '') }
+
+// Finds the single date-row matching both date AND label exactly (label ''
+// means the normal block). Returns the row number, or null if no such block
+// exists yet.
+function findBlockRow(sheet, date, label) {
+  var lr = sheet.getLastRow()
+  if (!lr) return null
+  var ab = sheet.getRange(1, 1, lr, 2).getValues()
+  var want = label || ''
+  for (var i = 0; i < ab.length; i++) {
+    if (parseDate(ab[i][0]) === date && String(ab[i][1] || '').trim() === want) return i + 1
+  }
+  return null
+}
+
+// Creates a bare date row for (date,label), anchored right after the last
+// existing block for that date (its header/rows/separator are added by the
+// caller via the normal header-ensure + insert flow). Returns the new row,
+// or null if no block for that date exists yet to anchor after.
+function createLabeledBlock(sheet, date, label) {
+  var lr = sheet.getLastRow()
+  var cA = lr ? sheet.getRange(1, 1, lr, 1).getValues() : []
+  var anchorRow = null
+  for (var i = 0; i < cA.length; i++) if (parseDate(cA[i][0]) === date) anchorRow = i + 1
+  if (anchorRow === null) return null
+
+  var lr2 = sheet.getLastRow()
+  var cA2 = sheet.getRange(1, 1, lr2, 1).getValues()
+  var bb  = blockBounds(anchorRow, cA2, lr2)
+
+  sheet.insertRowsAfter(bb.end, 1)
+  var newRow = bb.end + 1
+  sheet.getRange(newRow, 1).setValue(date)
+  if (label) sheet.getRange(newRow, DAYTIME_LABEL_COL).setValue(label)
+  return newRow
 }
 
 // Read block → { map: ticket→{rowNum,jiraVals,fullRow}, lastReal }
@@ -586,24 +634,27 @@ function syncJira(issuesByDate) {
   if (!issuesByDate||typeof issuesByDate!=='object') return badReq('issuesByDate required')
   try {
     var sheet=getSheet()
-    var allDates=getAllDates(sheet)
 
-    // Step 1: build globalMap — ticket → {blockDate, triggerRow, rowNum, jiraVals, fullRow}
+    // Step 1: build globalMap — ticket → {blockDate, blockLabel, blockKey,
+    // triggerRow, rowNum, jiraVals, fullRow}. Scans col A+B together so each
+    // block (normal or daytime) for a given date is tracked independently.
     var globalMap={}
     var snapLr=sheet.getLastRow()
-    var snapCA=snapLr?sheet.getRange(1,1,snapLr,1).getValues():[]
+    var snapAB=snapLr?sheet.getRange(1,1,snapLr,2).getValues():[]
 
-    for (var di=0;di<allDates.length;di++) {
-      var d=allDates[di]
-      var trs=rowsForDate(snapCA,d)
-      for (var ri=0;ri<trs.length;ri++) {
-        var tr=trs[ri]
-        var bb=blockBounds(tr,snapCA,snapLr)
-        var bd=readBlock(sheet,bb.start,bb.end,tr)
-        for (var tk in bd.map)
-          globalMap[tk]={blockDate:d,triggerRow:tr,rowNum:bd.map[tk].rowNum,
-                         jiraVals:bd.map[tk].jiraVals,fullRow:bd.map[tk].fullRow}
-      }
+    var blocks=[]
+    for (var bi=0;bi<snapAB.length;bi++) {
+      var bdate=parseDate(snapAB[bi][0])
+      if (bdate) blocks.push({date:bdate, label:String(snapAB[bi][1]||'').trim(), row:bi+1})
+    }
+    for (var bk=0;bk<blocks.length;bk++) {
+      var blk=blocks[bk]
+      var bb=blockBounds(blk.row,snapAB,snapLr)
+      var bd=readBlock(sheet,bb.start,bb.end,blk.row)
+      for (var tk in bd.map)
+        globalMap[tk]={blockDate:blk.date,blockLabel:blk.label,blockKey:blockKeyOf(blk.date,blk.label),
+                       triggerRow:blk.row,rowNum:bd.map[tk].rowNum,
+                       jiraVals:bd.map[tk].jiraVals,fullRow:bd.map[tk].fullRow}
     }
 
     // Step 2: classify
@@ -623,16 +674,18 @@ function syncJira(issuesByDate) {
         var sp      =splitPaths(iss['Content Release Paths']||'')
         var normDue =parseDate(rawDue)||rawDue
         if (!ticket) continue
+        var destLabel=blockLabelFor(title)
+        var destKey  =blockKeyOf(dateKey,destLabel)
         var ex=globalMap[ticket]
         if (!ex) {
-          if (!insertBatch[dateKey]) insertBatch[dateKey]=[]
-          insertBatch[dateKey].push([ticket,title,status,parent,fixVer,normDue,sp.crp,sp.launches,''])
+          if (!insertBatch[destKey]) insertBatch[destKey]={date:dateKey,label:destLabel,rows:[]}
+          insertBatch[destKey].rows.push([ticket,title,status,parent,fixVer,normDue,sp.crp,sp.launches,''])
           continue
         }
-        if (ex.blockDate!==dateKey) {
+        if (ex.blockKey!==destKey) {
           moveBatch.push({ticket:ticket,newVals:[ticket,title,status,parent,fixVer,normDue,sp.crp,sp.launches,''],
-            sourceRowNum:ex.rowNum,sourceTrigger:ex.triggerRow,
-            sourceDate:ex.blockDate,destDate:dateKey,fullRow:ex.fullRow})
+            sourceRowNum:ex.rowNum,sourceTrigger:ex.triggerRow,sourceDate:ex.blockDate,
+            destDate:dateKey,destLabel:destLabel,destKey:destKey,fullRow:ex.fullRow})
           continue
         }
         var xv=ex.jiraVals
@@ -681,66 +734,65 @@ function syncJira(issuesByDate) {
       affDates[moveBatch[mv].sourceDate]=true
     }
 
-    // 3c: move inserts into destination
+    // 3c: move inserts into destination — grouped by (date,label) block, not
+    // date alone, so a daytime-flagged ticket lands in its own block rather
+    // than every block sharing that date.
     if (moveBatch.length) {
       var byDest={}
-      moveBatch.forEach(function(m){if(!byDest[m.destDate])byDest[m.destDate]=[];byDest[m.destDate].push(m)})
-      for (var dd in byDest) {
-        var lr=sheet.getLastRow(), cA=sheet.getRange(1,1,lr,1).getValues()
-        var destTrs=rowsForDate(cA,dd)
-        if (!destTrs.length){Logger.log('WARN: dest date '+dd+' not found');continue}
-        destTrs.sort(function(a,b){return b-a})
-        destTrs.forEach(function(dtr){
-          if (!headerExists(sheet,dtr)){sheet.insertRowsAfter(dtr,1);styleHeader(sheet,dtr+1)}
-          var lr2=sheet.getLastRow(),cA2=sheet.getRange(1,1,lr2,1).getValues()
-          var dbb=blockBounds(dtr,cA2,lr2), dbd=readBlock(sheet,dbb.start,dbb.end,dtr)
-          var items=byDest[dd]
-          sheet.insertRowsAfter(dbd.lastReal,items.length)
-          items.forEach(function(m,mi){
-            writeJiraRow(sheet,dbd.lastReal+1+mi,m.newVals)
-            restoreUserCols(sheet,dbd.lastReal+1+mi,m.fullRow)
-          })
-          affDates[dd]=true
-          totalM+=items.length
+      moveBatch.forEach(function(m){
+        if(!byDest[m.destKey]) byDest[m.destKey]={date:m.destDate,label:m.destLabel,items:[]}
+        byDest[m.destKey].items.push(m)
+      })
+      for (var dk in byDest) {
+        var info=byDest[dk]
+        var destTr=findBlockRow(sheet,info.date,info.label)
+        if (destTr===null) destTr=createLabeledBlock(sheet,info.date,info.label)
+        if (destTr===null){Logger.log('WARN: dest date '+info.date+' not found');continue}
+        if (!headerExists(sheet,destTr)){sheet.insertRowsAfter(destTr,1);styleHeader(sheet,destTr+1)}
+        var lr2=sheet.getLastRow(),cA2=sheet.getRange(1,1,lr2,1).getValues()
+        var dbb=blockBounds(destTr,cA2,lr2), dbd=readBlock(sheet,dbb.start,dbb.end,destTr)
+        var items=info.items
+        sheet.insertRowsAfter(dbd.lastReal,items.length)
+        items.forEach(function(m,mi){
+          writeJiraRow(sheet,dbd.lastReal+1+mi,m.newVals)
+          restoreUserCols(sheet,dbd.lastReal+1+mi,m.fullRow)
         })
+        affDates[info.date]=true
+        totalM+=items.length
       }
     }
 
-    // 3d: new inserts
-    for (var insDt in insertBatch) {
-      var insRows=insertBatch[insDt]
-      var lr=sheet.getLastRow(), cA=sheet.getRange(1,1,lr,1).getValues()
-      var itrs=rowsForDate(cA,insDt)
-      if (!itrs.length){Logger.log('WARN: date '+insDt+' not in sheet');continue}
-      itrs.sort(function(a,b){return b-a})
-      itrs.forEach(function(itr){
-        if (!headerExists(sheet,itr)){sheet.insertRowsAfter(itr,1);styleHeader(sheet,itr+1)}
-        var lr2=sheet.getLastRow(),cA2=sheet.getRange(1,1,lr2,1).getValues()
-        var ibb=blockBounds(itr,cA2,lr2), ibd=readBlock(sheet,ibb.start,ibb.end,itr)
-        sheet.insertRowsAfter(ibd.lastReal,insRows.length)
-        insRows.forEach(function(rv,ri){writeJiraRow(sheet,ibd.lastReal+1+ri,rv)})
-        affDates[insDt]=true
-        totalI+=insRows.length
-      })
+    // 3d: new inserts — same (date,label) block targeting as 3c.
+    for (var insKey in insertBatch) {
+      var info=insertBatch[insKey]
+      var insRows=info.rows
+      var itr=findBlockRow(sheet,info.date,info.label)
+      if (itr===null) itr=createLabeledBlock(sheet,info.date,info.label)
+      if (itr===null){Logger.log('WARN: date '+info.date+' not in sheet');continue}
+      if (!headerExists(sheet,itr)){sheet.insertRowsAfter(itr,1);styleHeader(sheet,itr+1)}
+      var lr2=sheet.getLastRow(),cA2=sheet.getRange(1,1,lr2,1).getValues()
+      var ibb=blockBounds(itr,cA2,lr2), ibd=readBlock(sheet,ibb.start,ibb.end,itr)
+      sheet.insertRowsAfter(ibd.lastReal,insRows.length)
+      insRows.forEach(function(rv,ri){writeJiraRow(sheet,ibd.lastReal+1+ri,rv)})
+      affDates[info.date]=true
+      totalI+=insRows.length
     }
 
     // Mark all dates from issuesByDate + all dates already in sheet as affected
     for (var ibd2 in issuesByDate) affDates[ibd2]=true
     getAllDates(sheet).forEach(function(d){ affDates[d]=true })
 
-    // 3f: finalise every affected date — collect ALL positions first, then
-    // process bottom-up so insertRowsAfter in finaliseDate never shifts
-    // rows we haven't visited yet. done{} prevents same date twice.
+    // 3f: finalise every affected block — collect ALL positions first, then
+    // process bottom-up so insertRowsAfter in finaliseDate never shifts rows
+    // we haven't visited yet. A date can have more than one block (normal +
+    // daytime), so every matching row is finalised — no date-level dedup.
     var finalLr=sheet.getLastRow()
     if (finalLr>0) {
       var finalCA=sheet.getRange(1,1,finalLr,1).getValues()
-      // Build list of {date, row} for affected dates
       var toFinalise=[]
-      var seen={}
       for (var fd=0;fd<finalCA.length;fd++) {
         var fdDate=parseDate(finalCA[fd][0])
-        if (!fdDate||!affDates[fdDate]||seen[fdDate]) continue
-        seen[fdDate]=true
+        if (!fdDate||!affDates[fdDate]) continue
         toFinalise.push({date:fdDate, row:fd+1})
       }
       // Sort bottom-up so separator inserts don't shift unvisited rows above
